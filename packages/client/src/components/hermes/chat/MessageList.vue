@@ -6,12 +6,25 @@ import { useChatStore } from "@/stores/hermes/chat";
 import thinkingVideoLight from "@/assets/thinking-light.mp4";
 import thinkingVideoDark from "@/assets/thinking-dark.mp4";
 import { useTheme } from "@/composables/useTheme";
+import { useSettingsStore } from "@/stores/hermes/settings";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 
 const chatStore = useChatStore();
 const { t } = useI18n();
 const { isDark } = useTheme();
+const settingsStore = useSettingsStore();
 const { toolTraceVisible } = useToolTraceVisibility();
+
+const thinkingIsGif = computed(() => {
+  const url = settingsStore.display?.thinking_video_url?.trim()
+  return !!url && /\.gif(\?.*)?$/i.test(url)
+})
+
+const thinkingVideoSrc = computed(() => {
+  const custom = settingsStore.display.thinking_video_url;
+  if (custom && custom.trim()) return custom.trim();
+  return isDark.value ? thinkingVideoDark : thinkingVideoLight;
+});
 const listRef = ref<HTMLElement>();
 
 function formatTokens(n: number): string {
@@ -172,8 +185,15 @@ watch(currentToolCalls, () => {
     />
     <Transition name="fade">
       <div v-if="chatStore.isRunActive || chatStore.abortState" class="streaming-indicator">
+        <img
+          v-if="thinkingIsGif"
+          :src="thinkingVideoSrc"
+          class="thinking-video"
+          alt="thinking"
+        />
         <video
-          :src="isDark ? thinkingVideoDark : thinkingVideoLight"
+          v-else
+          :src="thinkingVideoSrc"
           autoplay
           loop
           muted

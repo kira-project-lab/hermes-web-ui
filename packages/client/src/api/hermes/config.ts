@@ -11,6 +11,7 @@ export interface DisplayConfig {
   inline_diffs?: boolean
   show_cost?: boolean
   skin?: string
+  thinking_video_url?: string
 }
 
 export interface AgentConfig {
