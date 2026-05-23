@@ -1092,6 +1092,7 @@ export default {
     roomDeleted: 'Room deleted',
     roomCloned: 'Room cloned',
     cloneRoom: 'Clone room',
+    copyRoomLink: 'Copy Room Link',
     deleteRoomConfirm: 'Delete this room?',
     clearContext: 'Clear context',
     clearContextConfirm: 'Clear this room context? Messages and compression snapshots will be removed, but agents and members stay.',

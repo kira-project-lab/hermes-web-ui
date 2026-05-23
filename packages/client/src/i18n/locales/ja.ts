@@ -1159,6 +1159,7 @@ export default {
     roomDeleted: 'ルームを削除しました',
     roomCloned: 'ルームを複製しました',
     cloneRoom: 'ルームを複製',
+    copyRoomLink: 'ルームリンクをコピー',
     deleteRoomConfirm: 'このルームを削除しますか？',
     clearContext: 'コンテキストを削除',
     clearContextConfirm: 'このルームのコンテキストを削除しますか？メッセージと圧縮スナップショットは削除されますが、エージェントとメンバーは残ります。',

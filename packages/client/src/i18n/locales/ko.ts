@@ -1159,6 +1159,7 @@ export default {
     roomDeleted: '방이 삭제되었습니다',
     roomCloned: '방이 복제되었습니다',
     cloneRoom: '방 복제',
+    copyRoomLink: '방 링크 복사',
     deleteRoomConfirm: '이 방을 삭제하시겠습니까?',
     clearContext: '컨텍스트 지우기',
     clearContextConfirm: '이 방의 컨텍스트를 지우시겠습니까? 메시지와 압축 스냅샷은 삭제되고 에이전트와 멤버는 유지됩니다.',

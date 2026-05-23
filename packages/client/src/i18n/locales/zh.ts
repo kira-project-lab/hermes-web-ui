@@ -1094,6 +1094,7 @@ export default {
     roomDeleted: '房间已删除',
     roomCloned: '房间已克隆',
     cloneRoom: '克隆房间',
+    copyRoomLink: '复制房间链接',
     deleteRoomConfirm: '确定删除这个房间吗？',
     clearContext: '清理上下文',
     clearContextConfirm: '确定清理当前房间上下文吗？消息和压缩快照会被删除，智能体和成员会保留。',

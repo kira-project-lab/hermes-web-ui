@@ -1095,6 +1095,7 @@ export default {
     roomDeleted: '房間已刪除',
     roomCloned: '房間已複製',
     cloneRoom: '複製房間',
+    copyRoomLink: '複製房間連結',
     deleteRoomConfirm: '確定刪除這個房間嗎？',
     clearContext: '清理上下文',
     clearContextConfirm: '確定清理目前房間上下文嗎？訊息和壓縮快照會被刪除，智慧代理和成員會保留。',

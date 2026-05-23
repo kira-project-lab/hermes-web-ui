@@ -26,6 +26,11 @@ const router = createRouter({
       component: () => import('@/views/hermes/HistoryView.vue'),
     },
     {
+      path: '/hermes/history/session/:sessionId',
+      name: 'hermes.historySession',
+      component: () => import('@/views/hermes/HistoryView.vue'),
+    },
+    {
       path: '/hermes/jobs',
       name: 'hermes.jobs',
       component: () => import('@/views/hermes/JobsView.vue'),
@@ -98,6 +103,11 @@ const router = createRouter({
     {
       path: '/hermes/group-chat',
       name: 'hermes.groupChat',
+      component: () => import('@/views/hermes/GroupChatView.vue'),
+    },
+    {
+      path: '/hermes/group-chat/room/:roomId',
+      name: 'hermes.groupChatRoom',
       component: () => import('@/views/hermes/GroupChatView.vue'),
     },
     {

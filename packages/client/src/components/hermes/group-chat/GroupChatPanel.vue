@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { useMessage, NInput, NButton, NSpace, NSelect, NPopover, NPopconfirm, NInputNumber } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -8,10 +9,12 @@ import { updateRoomConfig, forceCompress } from '@/api/hermes/group-chat'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
+import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
 import type { RoomAgent } from '@/api/hermes/group-chat'
 
 const { t } = useI18n()
+const router = useRouter()
 const message = useMessage()
 const store = useGroupChatStore()
 const profilesStore = useProfilesStore()
@@ -94,7 +97,7 @@ async function handleCreateRoom(name: string, inviteCode: string, userName: stri
         const failureMessage = formatAgentFailures(res.agentResults)
         if (failureMessage) message.warning(failureMessage)
         else message.success(t('groupChat.roomCreated'))
-        await store.joinRoom(res.room.id)
+        await router.push({ name: 'hermes.groupChatRoom', params: { roomId: res.room.id } })
     } catch {
         message.error(t('common.saveFailed'))
     }
@@ -103,10 +106,24 @@ async function handleCreateRoom(name: string, inviteCode: string, userName: stri
 async function handleDeleteRoom(roomId: string) {
     try {
         await store.deleteRoom(roomId)
+        if (store.currentRoomId === roomId) {
+            await router.replace({ name: 'hermes.groupChat' })
+        }
         message.success(t('groupChat.roomDeleted'))
     } catch {
         message.error(t('common.saveFailed'))
     }
+}
+
+function buildRoomUrl(roomId: string) {
+    const href = router.resolve({ name: 'hermes.groupChatRoom', params: { roomId } }).href
+    return `${window.location.origin}${window.location.pathname}${href}`
+}
+
+async function copyRoomLink(roomId: string) {
+    const ok = await copyToClipboard(buildRoomUrl(roomId))
+    if (ok) message.success(t('common.copied'))
+    else message.error(t('common.copied') + ' ✗')
 }
 
 function handleOpenCloneRoom(roomId: string) {
@@ -128,7 +145,7 @@ async function confirmCloneRoom() {
         cloneSourceRoomId.value = null
         cloneRoomName.value = ''
         cloneInviteCode.value = ''
-        await store.joinRoom(res.room.id)
+        await router.push({ name: 'hermes.groupChatRoom', params: { roomId: res.room.id } })
         const failureMessage = formatAgentFailures(res.agentResults)
         if (failureMessage) message.warning(failureMessage)
         else message.success(t('groupChat.roomCloned'))
@@ -153,7 +170,7 @@ async function handleClearRoomContext() {
 
 async function handleSelectRoom(roomId: string) {
     try {
-        await store.joinRoom(roomId)
+        await router.push({ name: 'hermes.groupChatRoom', params: { roomId } })
         if (window.innerWidth <= 768) showSidebar.value = false
     } catch {
         message.error(t('groupChat.joinFailed'))
@@ -308,6 +325,11 @@ watch(() => store.sortedMessages.length, async () => {
                         <span v-if="room.inviteCode" class="room-code">{{ room.inviteCode }}</span>
                         <span class="room-tokens">{{ formatTokens(room.totalTokens || 0) }}</span>
                     </div>
+                    <button class="room-action-btn" :title="t('groupChat.copyRoomLink')" @click.stop="copyRoomLink(room.id)">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                        </svg>
+                    </button>
                     <button class="room-action-btn" :title="t('groupChat.cloneRoom')" @click.stop="handleOpenCloneRoom(room.id)">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <rect x="8" y="8" width="12" height="12" rx="2" /><path d="M4 16V6a2 2 0 0 1 2-2h10" />
