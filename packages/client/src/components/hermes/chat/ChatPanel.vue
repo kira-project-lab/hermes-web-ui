@@ -259,8 +259,7 @@ function handleApproval(choice: "once" | "session" | "always" | "deny") {
 }
 
 function buildSessionUrl(sessionId: string): string {
-  const base = `${window.location.origin}${window.location.pathname}`;
-  return `${base}#/hermes/session/${encodeURIComponent(sessionId)}`;
+  return `${window.location.origin}/hermes/session/${encodeURIComponent(sessionId)}`;
 }
 
 async function copySessionLink(id?: string) {
