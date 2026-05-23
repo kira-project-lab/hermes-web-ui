@@ -147,6 +147,16 @@ export async function bootstrap() {
     logger.info('Auth enabled — token: %s', authToken)
   }
 
+  // Serve user-uploaded files (thinking animation, etc.)
+  app.use(async (ctx, next) => {
+    if (ctx.path.startsWith('/user-uploads/')) {
+      ctx.path = ctx.path.slice('/user-uploads'.length)
+      await serve(config.uploadDir)(ctx, next)
+    } else {
+      await next()
+    }
+  })
+
   // SPA fallback — serve Vite production build
   const distDir = resolve(__dirname, '..', 'client')
 
