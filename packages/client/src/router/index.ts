@@ -1,5 +1,46 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationRaw } from 'vue-router'
 import { hasApiKey } from '@/api/client'
+
+const routeMap = [
+  { path: '/chat', name: 'hermes.chat', component: () => import('@/views/hermes/ChatView.vue') },
+  { path: '/session/:sessionId', name: 'hermes.session', component: () => import('@/views/hermes/ChatView.vue') },
+  { path: '/history', name: 'hermes.history', component: () => import('@/views/hermes/HistoryView.vue') },
+  { path: '/history/session/:sessionId', name: 'hermes.historySession', component: () => import('@/views/hermes/HistoryView.vue') },
+  { path: '/jobs', name: 'hermes.jobs', component: () => import('@/views/hermes/JobsView.vue') },
+  { path: '/kanban', name: 'hermes.kanban', component: () => import('@/views/hermes/KanbanView.vue') },
+  { path: '/models', name: 'hermes.models', component: () => import('@/views/hermes/ModelsView.vue') },
+  { path: '/profiles', name: 'hermes.profiles', component: () => import('@/views/hermes/ProfilesView.vue') },
+  { path: '/logs', name: 'hermes.logs', component: () => import('@/views/hermes/LogsView.vue') },
+  { path: '/usage', name: 'hermes.usage', component: () => import('@/views/hermes/UsageView.vue') },
+  { path: '/performance', name: 'hermes.performance', component: () => import('@/views/hermes/PerformanceView.vue') },
+  { path: '/skills-usage', name: 'hermes.skillsUsage', component: () => import('@/views/hermes/SkillsUsageView.vue') },
+  { path: '/skills', name: 'hermes.skills', component: () => import('@/views/hermes/SkillsView.vue') },
+  { path: '/plugins', name: 'hermes.plugins', component: () => import('@/views/hermes/PluginsView.vue') },
+  { path: '/memory', name: 'hermes.memory', component: () => import('@/views/hermes/MemoryView.vue') },
+  { path: '/settings', name: 'hermes.settings', component: () => import('@/views/hermes/SettingsView.vue') },
+  { path: '/channels', name: 'hermes.channels', component: () => import('@/views/hermes/ChannelsView.vue') },
+  { path: '/terminal', name: 'hermes.terminal', component: () => import('@/views/hermes/TerminalView.vue') },
+  { path: '/group-chat', name: 'hermes.groupChat', component: () => import('@/views/hermes/GroupChatView.vue') },
+  { path: '/group-chat/room/:roomId', name: 'hermes.groupChatRoom', component: () => import('@/views/hermes/GroupChatView.vue') },
+  { path: '/files', name: 'hermes.files', component: () => import('@/views/hermes/FilesView.vue') },
+]
+
+function cleanLegacyHermesPath(pathMatch: string | string[] | undefined): string {
+  const segments = Array.isArray(pathMatch)
+    ? pathMatch
+    : typeof pathMatch === 'string' && pathMatch
+      ? [pathMatch]
+      : []
+  return `/${segments.filter(Boolean).join('/') || 'chat'}`
+}
+
+function loginRedirectTarget(raw: unknown): RouteLocationRaw {
+  const redirect = Array.isArray(raw) ? raw[0] : raw
+  if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
+    return redirect
+  }
+  return { name: 'hermes.chat' }
+}
 
 const router = createRouter({
   history: createWebHistory(),
@@ -10,110 +51,14 @@ const router = createRouter({
       component: () => import('@/views/LoginView.vue'),
       meta: { public: true },
     },
+    ...routeMap,
     {
-      path: '/hermes/chat',
-      name: 'hermes.chat',
-      component: () => import('@/views/hermes/ChatView.vue'),
-    },
-    {
-      path: '/hermes/session/:sessionId',
-      name: 'hermes.session',
-      component: () => import('@/views/hermes/ChatView.vue'),
-    },
-    {
-      path: '/hermes/history',
-      name: 'hermes.history',
-      component: () => import('@/views/hermes/HistoryView.vue'),
-    },
-    {
-      path: '/hermes/history/session/:sessionId',
-      name: 'hermes.historySession',
-      component: () => import('@/views/hermes/HistoryView.vue'),
-    },
-    {
-      path: '/hermes/jobs',
-      name: 'hermes.jobs',
-      component: () => import('@/views/hermes/JobsView.vue'),
-    },
-    {
-      path: '/hermes/kanban',
-      name: 'hermes.kanban',
-      component: () => import('@/views/hermes/KanbanView.vue'),
-    },
-    {
-      path: '/hermes/models',
-      name: 'hermes.models',
-      component: () => import('@/views/hermes/ModelsView.vue'),
-    },
-    {
-      path: '/hermes/profiles',
-      name: 'hermes.profiles',
-      component: () => import('@/views/hermes/ProfilesView.vue'),
-    },
-    {
-      path: '/hermes/logs',
-      name: 'hermes.logs',
-      component: () => import('@/views/hermes/LogsView.vue'),
-    },
-    {
-      path: '/hermes/usage',
-      name: 'hermes.usage',
-      component: () => import('@/views/hermes/UsageView.vue'),
-    },
-    {
-      path: '/hermes/performance',
-      name: 'hermes.performance',
-      component: () => import('@/views/hermes/PerformanceView.vue'),
-    },
-    {
-      path: '/hermes/skills-usage',
-      name: 'hermes.skillsUsage',
-      component: () => import('@/views/hermes/SkillsUsageView.vue'),
-    },
-    {
-      path: '/hermes/skills',
-      name: 'hermes.skills',
-      component: () => import('@/views/hermes/SkillsView.vue'),
-    },
-    {
-      path: '/hermes/plugins',
-      name: 'hermes.plugins',
-      component: () => import('@/views/hermes/PluginsView.vue'),
-    },
-    {
-      path: '/hermes/memory',
-      name: 'hermes.memory',
-      component: () => import('@/views/hermes/MemoryView.vue'),
-    },
-    {
-      path: '/hermes/settings',
-      name: 'hermes.settings',
-      component: () => import('@/views/hermes/SettingsView.vue'),
-    },
-    {
-      path: '/hermes/channels',
-      name: 'hermes.channels',
-      component: () => import('@/views/hermes/ChannelsView.vue'),
-    },
-    {
-      path: '/hermes/terminal',
-      name: 'hermes.terminal',
-      component: () => import('@/views/hermes/TerminalView.vue'),
-    },
-    {
-      path: '/hermes/group-chat',
-      name: 'hermes.groupChat',
-      component: () => import('@/views/hermes/GroupChatView.vue'),
-    },
-    {
-      path: '/hermes/group-chat/room/:roomId',
-      name: 'hermes.groupChatRoom',
-      component: () => import('@/views/hermes/GroupChatView.vue'),
-    },
-    {
-      path: '/hermes/files',
-      name: 'hermes.files',
-      component: () => import('@/views/hermes/FilesView.vue'),
+      path: '/hermes/:pathMatch(.*)*',
+      redirect: to => ({
+        path: cleanLegacyHermesPath(to.params.pathMatch as string | string[] | undefined),
+        query: to.query,
+        hash: typeof to.hash === 'string' && to.hash.startsWith('#/hermes/') ? '' : to.hash,
+      }),
     },
   ],
 })
@@ -121,9 +66,9 @@ const router = createRouter({
 router.beforeEach((to, _from, next) => {
   // Public pages don't need auth
   if (to.meta.public) {
-    // Already has key, skip login
+    // Already has key, skip login and preserve the original deep-link target.
     if (to.name === 'login' && hasApiKey()) {
-      next({ path: '/hermes/chat' })
+      next(loginRedirectTarget(to.query.redirect))
       return
     }
     next()
@@ -132,7 +77,7 @@ router.beforeEach((to, _from, next) => {
 
   // All other pages require token
   if (!hasApiKey()) {
-    next({ name: 'login' })
+    next({ name: 'login', query: { redirect: to.fullPath } })
     return
   }
 

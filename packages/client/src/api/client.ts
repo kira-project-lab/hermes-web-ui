@@ -73,7 +73,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   if (res.status === 401 && isLocalBff) {
     clearApiKey()
     if (router.currentRoute.value.name !== 'login') {
-      router.replace({ name: 'login' })
+      router.replace({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
     }
     throw new Error('Unauthorized')
   }

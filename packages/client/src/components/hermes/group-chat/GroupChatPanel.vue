@@ -117,7 +117,7 @@ async function handleDeleteRoom(roomId: string) {
 
 function buildRoomUrl(roomId: string) {
     const href = router.resolve({ name: 'hermes.groupChatRoom', params: { roomId } }).href
-    return `${window.location.origin}${window.location.pathname}${href}`
+    return `${window.location.origin}${href}`
 }
 
 async function copyRoomLink(roomId: string) {

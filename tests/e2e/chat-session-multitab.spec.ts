@@ -99,11 +99,21 @@ async function waitForRun(page: Page, index = 0) {
 test('route session id wins over shared active-session localStorage', async ({ page }) => {
   const api = await setupChatPage(page)
 
-  await page.goto('/hermes/session/session-a')
+  await page.goto('/session/session-a')
 
   await expect(page.getByText('Alpha route content')).toBeVisible()
   await expect(page.getByText('Beta route content')).toHaveCount(0)
-  await expect(page).toHaveURL(/\/hermes\/session\/session-a$/)
+  await expect(page).toHaveURL(/\/session\/session-a$/)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('legacy mixed path and hash session links normalize to clean session URLs', async ({ page }) => {
+  const api = await setupChatPage(page)
+
+  await page.goto('/hermes/session/session-a#/hermes/chat')
+
+  await expect(page.getByText('Alpha route content')).toBeVisible()
+  await expect(page).toHaveURL(/\/session\/session-a$/)
   expect(api.unexpectedRequests).toEqual([])
 })
 
@@ -113,8 +123,8 @@ test('two tabs can show different sessions and keep them after reload', async ({
   const apiA = await setupChatPage(pageA)
   const apiB = await setupChatPage(pageB)
 
-  await pageA.goto('/hermes/session/session-a')
-  await pageB.goto('/hermes/session/session-b')
+  await pageA.goto('/session/session-a')
+  await pageB.goto('/session/session-b')
 
   await expect(pageA.getByText('Alpha route content')).toBeVisible()
   await expect(pageB.getByText('Beta route content')).toBeVisible()
@@ -124,8 +134,8 @@ test('two tabs can show different sessions and keep them after reload', async ({
 
   await expect(pageA.getByText('Alpha route content')).toBeVisible()
   await expect(pageB.getByText('Beta route content')).toBeVisible()
-  await expect(pageA).toHaveURL(/\/hermes\/session\/session-a$/)
-  await expect(pageB).toHaveURL(/\/hermes\/session\/session-b$/)
+  await expect(pageA).toHaveURL(/\/session\/session-a$/)
+  await expect(pageB).toHaveURL(/\/session\/session-b$/)
   expect(apiA.unexpectedRequests).toEqual([])
   expect(apiB.unexpectedRequests).toEqual([])
 })
@@ -136,8 +146,8 @@ test('parallel tabs send runs and render progress only for their own session', a
   const apiA = await setupChatPage(pageA)
   const apiB = await setupChatPage(pageB)
 
-  await pageA.goto('/hermes/session/session-a')
-  await pageB.goto('/hermes/session/session-b')
+  await pageA.goto('/session/session-a')
+  await pageB.goto('/session/session-b')
   await expect(pageA.getByText('Alpha route content')).toBeVisible()
   await expect(pageB.getByText('Beta route content')).toBeVisible()
 
@@ -167,3 +177,4 @@ test('parallel tabs send runs and render progress only for their own session', a
   expect(apiA.unexpectedRequests).toEqual([])
   expect(apiB.unexpectedRequests).toEqual([])
 })
+

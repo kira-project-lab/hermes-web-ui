@@ -1,12 +1,22 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { setApiKey, hasApiKey } from "@/api/client";
 import { fetchAuthStatus, loginWithPassword } from "@/api/auth";
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
+
+function postLoginTarget() {
+  const redirect = route.query.redirect;
+  const target = Array.isArray(redirect) ? redirect[0] : redirect;
+  if (typeof target === "string" && target.startsWith("/") && !target.startsWith("//")) {
+    return target;
+  }
+  return "/chat";
+}
 
 // Read token saved by main.ts (before router strips URL params)
 const urlToken = (window as any).__LOGIN_TOKEN__ || "";
@@ -23,7 +33,7 @@ const hasPasswordLogin = ref(false);
 
 // If already has a key, try to go to main page
 if (hasApiKey()) {
-  router.replace("/hermes/chat");
+  router.replace(postLoginTarget());
 }
 
 onMounted(async () => {
@@ -74,7 +84,7 @@ async function handleTokenLogin() {
     }
 
     setApiKey(key);
-    router.replace("/hermes/chat");
+    router.replace(postLoginTarget());
   } catch {
     errorMsg.value = t("login.connectionFailed");
   } finally {
@@ -94,7 +104,7 @@ async function handlePasswordLogin() {
   try {
     const sessionToken = await loginWithPassword(username.value.trim(), password.value);
     setApiKey(sessionToken);
-    router.replace("/hermes/chat");
+    router.replace(postLoginTarget());
   } catch (err: any) {
     if (err.status === 429 || err.status === 503) {
       errorMsg.value = t("login.tooManyAttempts");
