@@ -15,6 +15,7 @@ import copy
 import errno
 import hashlib
 import importlib.util
+import inspect
 import json
 import locale
 import os
@@ -465,7 +466,20 @@ def _resolve_runtime(model: str, provider: str | None = None) -> dict[str, Any]:
     from hermes_cli.runtime_provider import resolve_runtime_provider
 
     requested = provider or os.environ.get("HERMES_BRIDGE_PROVIDER", "").strip() or None
-    return resolve_runtime_provider(requested=requested, target_model=model or None)
+    runtime_kwargs: dict[str, Any] = {"requested": requested}
+    try:
+        signature = inspect.signature(resolve_runtime_provider)
+    except (TypeError, ValueError):
+        signature = None
+    if model and signature and "target_model" in signature.parameters:
+        runtime_kwargs["target_model"] = model or None
+
+    try:
+        return resolve_runtime_provider(**runtime_kwargs)
+    except TypeError as exc:
+        if "target_model" not in str(exc):
+            raise
+        return resolve_runtime_provider(requested=requested)
 
 
 def _load_enabled_toolsets() -> list[str] | None:

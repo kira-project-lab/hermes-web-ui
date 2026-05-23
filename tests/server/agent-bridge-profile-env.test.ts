@@ -235,6 +235,45 @@ print(json.dumps({
     })
   })
 
+  it('falls back when runtime_provider does not accept target_model', async () => {
+    const result = await runBridgeProbe(`
+import importlib.util
+import json
+import os
+import sys
+import types
+
+spec = importlib.util.spec_from_file_location("hermes_bridge", os.environ["BRIDGE_PATH"])
+bridge = importlib.util.module_from_spec(spec)
+sys.modules["hermes_bridge"] = bridge
+spec.loader.exec_module(bridge)
+
+bridge._ensure_agent_imports = lambda: None
+fake_pkg = types.ModuleType("hermes_cli")
+fake_pkg.__path__ = []
+fake_runtime = types.ModuleType("hermes_cli.runtime_provider")
+
+def resolve_runtime_provider(*, requested=None):
+    return {
+        "provider": "legacy",
+        "requested": requested,
+        "target_model_seen": False,
+    }
+
+fake_runtime.resolve_runtime_provider = resolve_runtime_provider
+sys.modules["hermes_cli"] = fake_pkg
+sys.modules["hermes_cli.runtime_provider"] = fake_runtime
+
+print(json.dumps(bridge._resolve_runtime("gpt-5.4-mini", "openai-codex")))
+`)
+
+    expect(result).toEqual({
+      provider: 'legacy',
+      requested: 'openai-codex',
+      target_model_seen: false,
+    })
+  })
+
   it('handles Windows netstat output decode failures without crashing', async () => {
     const result = await runBridgeProbe(`
 import importlib.util
