@@ -308,6 +308,7 @@ export async function list(ctx: any) {
   try {
     const config = await readConfigYaml()
     const disabledList: string[] = config.skills?.disabled || []
+    const skillsDir = join(getHermesDir(), 'skills')
 
     // Read provenance sources for the primary skills directory.
     const bundledManifest = readBundledManifest(await safeReadFile(join(skillsDir, '.bundled_manifest')))
@@ -393,7 +394,7 @@ export async function listFiles(ctx: any) {
   const allDirs = await getAllSkillsDirs()
   for (const dir of allDirs) {
     const skillDir = category === 'misc'
-      ? join(dir, 'skills', skill)
+      ? join(dir, skill)
       : join(dir, category, skill)
     try {
       await readdir(skillDir) // quick existence check
@@ -413,8 +414,8 @@ export async function readFile_(ctx: any) {
   for (const dir of allDirs) {
     // Handle 'misc' category: real skill dir is skills/<skill>, not skills/misc/<skill>
     const normalizedPath = filePath.startsWith('misc/') ? filePath.slice(5) : filePath
-    const fullPath = resolve(join(dir, 'skills', normalizedPath))
-    if (!isPathWithin(fullPath, join(dir, 'skills'))) continue
+    const fullPath = resolve(join(dir, normalizedPath))
+    if (!isPathWithin(fullPath, dir)) continue
     const content = await safeReadFile(fullPath)
     if (content !== null) {
       ctx.body = { content }
