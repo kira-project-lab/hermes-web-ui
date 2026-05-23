@@ -147,14 +147,25 @@ export async function bootstrap() {
     logger.info('Auth enabled — token: %s', authToken)
   }
 
-  // SPA fallback
+  // SPA fallback — serve Vite production build
   const distDir = resolve(__dirname, '..', 'client')
-  app.use(serve(distDir))
+
+  // Serve hashed static assets with long-lived cache (Vite uses content hashes
+  // in filenames so they are safe to cache permanently; index.html is excluded
+  // because it is served by the SPA fallback below with no-cache semantics).
+  app.use(serve(distDir, {
+    maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year in ms (koa-static divides by 1000)
+    immutable: true,
+  }))
+
+  // SPA fallback — always revalidate index.html so users get the latest
+  // entry point that references current hashed asset filenames.
   app.use(async (ctx) => {
     if (!ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
       ctx.path !== '/upload' &&
       ctx.path !== '/webhook') {
+      ctx.set('Cache-Control', 'no-cache')
       await send(ctx, 'index.html', { root: distDir })
     }
   })
