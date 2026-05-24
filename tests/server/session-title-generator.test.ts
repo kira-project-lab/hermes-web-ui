@@ -4,7 +4,6 @@ const readConfigYamlForProfileMock = vi.fn()
 const getSessionDetailMock = vi.fn()
 const updateSessionMock = vi.fn()
 const callSummarizerMock = vi.fn()
-const emitSessionListChangedMock = vi.fn()
 
 vi.doMock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
@@ -13,10 +12,6 @@ vi.doMock('../../packages/server/src/services/config-helpers', () => ({
 vi.doMock('../../packages/server/src/db/hermes/session-store', () => ({
   getSessionDetail: getSessionDetailMock,
   updateSession: updateSessionMock,
-}))
-
-vi.doMock('../../packages/server/src/services/hermes/run-chat/status-feed', () => ({
-  emitSessionListChanged: emitSessionListChangedMock,
 }))
 
 vi.doMock('../../packages/server/src/lib/context-compressor', () => ({
@@ -30,7 +25,6 @@ describe('session title generation service', () => {
     getSessionDetailMock.mockReset()
     updateSessionMock.mockReset()
     callSummarizerMock.mockReset()
-    emitSessionListChangedMock.mockReset()
   })
 
   afterEach(() => {
@@ -110,11 +104,17 @@ describe('session title generation service', () => {
     })
     callSummarizerMock.mockResolvedValue('Refresh live title')
 
-    const nsp = { to: vi.fn(() => ({ emit: vi.fn() })) } as any
+    const emitMock = vi.fn()
+    const nsp = { to: vi.fn(() => ({ emit: emitMock })) } as any
     const { maybeGenerateSessionTitle } = await import('../../packages/server/src/services/hermes/session-title-generator')
     const result = await maybeGenerateSessionTitle('session-3', 'default', nsp)
 
     expect(result.generated).toBe(true)
-    expect(emitSessionListChangedMock).toHaveBeenCalledWith(nsp, 'default', 'updated', 'session-3')
+    expect(nsp.to).toHaveBeenCalledWith('profile:default:session-status')
+    expect(emitMock).toHaveBeenCalledWith('session.list.changed', expect.objectContaining({
+      profile: 'default',
+      reason: 'updated',
+      session_id: 'session-3',
+    }))
   })
 })

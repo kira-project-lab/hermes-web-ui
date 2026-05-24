@@ -3,7 +3,6 @@ import { readConfigYamlForProfile } from '../config-helpers'
 import { getActiveProfileName } from './hermes-profile'
 import { getSessionDetail, updateSession } from '../../db/hermes/session-store'
 import type { Server } from 'socket.io'
-import { emitSessionListChanged } from './run-chat/status-feed'
 
 export interface SessionTitleGenerationConfig {
   enabled?: boolean
@@ -139,7 +138,12 @@ export async function maybeGenerateSessionTitle(
   })
 
   if (nsp) {
-    emitSessionListChanged(nsp, profile, 'updated', sessionId)
+    nsp.to(`profile:${profile}:session-status`).emit('session.list.changed', {
+      profile,
+      reason: 'updated',
+      session_id: sessionId,
+      updatedAt: Date.now(),
+    })
   }
 
   return { generated: true, title }
