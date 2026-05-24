@@ -18,7 +18,7 @@ function resolveDefaultAgentBridgeEndpoint(): string {
 }
 
 export const DEFAULT_AGENT_BRIDGE_ENDPOINT = resolveDefaultAgentBridgeEndpoint()
-export const DEFAULT_AGENT_BRIDGE_TIMEOUT_MS = 120000
+export const DEFAULT_AGENT_BRIDGE_TIMEOUT_MS = 360000
 
 function envPositiveInt(name: string): number | undefined {
   const raw = process.env[name]
