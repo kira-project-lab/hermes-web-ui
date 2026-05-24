@@ -15,6 +15,8 @@ export interface HermesSessionRow {
   model: string
   provider: string
   title: string | null
+  title_source: string
+  title_generated_at: number | null
   started_at: number
   ended_at: number | null
   end_reason: string | null
@@ -81,6 +83,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
   const rawTitle = row.title != null ? String(row.title) : null
   const preview = String(row.preview || '')
   const title = rawTitle || (preview ? (preview.length > 40 ? preview.slice(0, 40) + '...' : preview) : null)
+  const titleSource = String(row.title_source || 'fallback')
   return {
     id: String(row.id || ''),
     profile: String(row.profile || 'default'),
@@ -89,6 +92,8 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     model: String(row.model || ''),
     provider: String(row.provider || ''),
     title,
+    title_source: titleSource,
+    title_generated_at: row.title_generated_at != null ? Number(row.title_generated_at) : null,
     started_at: Number(row.started_at || 0),
     ended_at: row.ended_at != null ? Number(row.ended_at) : null,
     end_reason: row.end_reason != null ? String(row.end_reason) : null,
@@ -127,6 +132,10 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
   }
 }
 
+function resolveTitleSource(titleSource?: string): string {
+  return titleSource || 'fallback'
+}
+
 // --- Session CRUD ---
 
 export function createSession(data: {
@@ -136,6 +145,8 @@ export function createSession(data: {
   model?: string
   provider?: string
   title?: string
+  titleSource?: string
+  titleGeneratedAt?: number
   workspace?: string
 }): HermesSessionRow {
   const now = Math.floor(Date.now() / 1000)
@@ -144,6 +155,8 @@ export function createSession(data: {
     return {
       id: data.id, profile: data.profile || 'default', source,
       user_id: null, model: data.model || '', provider: data.provider || '', title: data.title || null,
+      title_source: resolveTitleSource(data.titleSource),
+      title_generated_at: data.titleGeneratedAt ?? null,
       started_at: now, ended_at: null, end_reason: null,
       message_count: 0, tool_call_count: 0,
       input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
@@ -153,9 +166,9 @@ export function createSession(data: {
   }
   const db = getDb()!
   db.prepare(
-    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, model, provider, title, started_at, last_active, workspace)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(data.id, data.profile || 'default', source, data.model || '', data.provider || '', data.title || null, now, now, data.workspace || null)
+    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, model, provider, title, title_source, title_generated_at, started_at, last_active, workspace)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(data.id, data.profile || 'default', source, data.model || '', data.provider || '', data.title || null, resolveTitleSource(data.titleSource), data.titleGeneratedAt ?? null, now, now, data.workspace || null)
   return getSession(data.id)!
 }
 
@@ -216,7 +229,7 @@ export function clearSessionMessages(id: string): number {
 export function renameSession(id: string, title: string): boolean {
   if (!isSqliteAvailable()) return false
   const db = getDb()!
-  const result = db.prepare(`UPDATE ${SESSIONS_TABLE} SET title = ? WHERE id = ?`).run(title, id)
+  const result = db.prepare(`UPDATE ${SESSIONS_TABLE} SET title = ?, title_source = 'manual', title_generated_at = NULL WHERE id = ?`).run(title, id)
   return result.changes > 0
 }
 

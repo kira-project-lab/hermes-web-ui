@@ -17,6 +17,8 @@ export interface HermesSessionRow {
   user_id: string | null
   model: string
   title: string | null
+  title_source: string
+  title_generated_at: number | null
   started_at: number
   ended_at: number | null
   end_reason: string | null
@@ -100,6 +102,8 @@ function mapRow(row: Record<string, unknown>): HermesSessionRow {
     user_id: normalizeNullableString(row.user_id),
     model: String(row.model || ''),
     title: normalizeNullableString(row.title),
+    title_source: String(row.title_source || 'fallback'),
+    title_generated_at: normalizeNullableNumber(row.title_generated_at),
     started_at: startedAt,
     ended_at: normalizeNullableNumber(row.ended_at),
     end_reason: normalizeNullableString(row.end_reason),
@@ -125,6 +129,8 @@ const SESSION_SELECT = `
   COALESCE(s.user_id, '') AS user_id,
   COALESCE(s.model, '') AS model,
   COALESCE(s.title, '') AS title,
+  COALESCE(s.title_source, 'fallback') AS title_source,
+  s.title_generated_at AS title_generated_at,
   COALESCE(s.started_at, 0) AS started_at,
   s.ended_at AS ended_at,
   COALESCE(s.end_reason, '') AS end_reason,
