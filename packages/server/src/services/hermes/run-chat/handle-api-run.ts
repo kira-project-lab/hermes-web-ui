@@ -24,6 +24,7 @@ import { handleMessage } from './message-format'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 import type { ContentBlock, SessionState, ChatRunSource } from './types'
+import { emitSessionStatus } from './status-feed'
 
 export function resolveRunSource(_source?: string, _sessionId?: string): ChatRunSource {
   return 'cli'
@@ -217,6 +218,8 @@ export async function handleApiRun(
       state.isWorking = true
       state.runId = undefined
       state.abortController = abortController
+      state.profile = profile
+      emitSessionStatus(nsp, session_id, state, profile)
     }
 
     const res = await fetch(`${upstream}/v1/responses`, {
@@ -383,11 +386,14 @@ async function markApiCompleted(
     flushResponseRunToDb(state, sessionId)
     state.responseRun = undefined
     state.activeRunMarker = undefined
+    const statusProfile = state.profile || 'default'
     if (info.keepWorking) {
       state.source = info.nextSource
     } else {
       state.profile = undefined
     }
+    state.pendingApproval = null
+    emitSessionStatus(nsp, sessionId, state, statusProfile)
     updateSessionStats(sessionId)
     const emit = (event: string, payload: any) => {
       nsp.to(`session:${sessionId}`).emit(event, { ...payload, session_id: sessionId })

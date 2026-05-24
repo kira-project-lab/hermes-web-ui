@@ -10,6 +10,7 @@ import { flushResponseRunToDb } from './response-stream'
 import { replaceState } from './compression'
 import { calcAndUpdateUsage } from './usage'
 import type { QueuedRun, SessionState } from './types'
+import { emitSessionStatus } from './status-feed'
 
 export async function handleAbort(
   nsp: ReturnType<Server['of']>,
@@ -28,6 +29,8 @@ export async function handleAbort(
       state.abortController = undefined
       state.runId = undefined
       state.events = []
+      state.pendingApproval = null
+      emitSessionStatus(nsp, sessionId, state)
     }
     emitToSession(nsp, socket, sessionId, 'abort.completed', {
       event: 'abort.completed',
@@ -39,6 +42,7 @@ export async function handleAbort(
 
   const runId = state.runId
   state.isAborting = true
+  emitSessionStatus(nsp, sessionId, state)
   replaceState(sessionMap, sessionId, 'abort.started', {
     event: 'abort.started',
     run_id: runId,
@@ -96,6 +100,7 @@ export async function markAbortCompleted(
   state.runId = undefined
   state.responseRun = undefined
   state.activeRunMarker = undefined
+  state.pendingApproval = null
 
   // Process queued messages after abort completes
   if (state.queue.length > 0) {
@@ -122,11 +127,13 @@ export async function markAbortCompleted(
       queue_length: state.queue.length,
     })
     state.events = []
+    emitSessionStatus(nsp, sessionId, state, state.profile || profile || 'default')
     runQueuedItem(socket, sessionId, next, profile || 'default')
     return
   }
 
   state.events = []
+  emitSessionStatus(nsp, sessionId, state, profile || 'default')
   emitToSession(nsp, socket, sessionId, 'abort.completed', {
     event: 'abort.completed',
     run_id: runId,

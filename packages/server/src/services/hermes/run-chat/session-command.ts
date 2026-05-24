@@ -8,6 +8,7 @@ import { handleAbort } from './abort'
 import { calcAndUpdateUsage, contextTokensWithCachedOverhead, updateMessageContextTokenUsage } from './usage'
 import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
+import { emitSessionStatus } from './status-feed'
 
 type CommandName =
   | 'usage'
@@ -173,6 +174,7 @@ export async function handleSessionCommand(
           queued: true,
         })),
       })
+      emitSessionStatus(ctx.nsp, sessionId, state, ctx.profile)
       emitCommand({
         action: 'queue',
         terminal: false,
@@ -354,6 +356,7 @@ export async function handleSessionCommand(
         state.bridgeOutput = undefined
         state.bridgePendingTools = undefined
         state.bridgeCompressionResults = undefined
+        state.pendingApproval = null
         replaceState(ctx.sessionMap, sessionId, 'session.command', {
           event: 'session.command',
           action: 'destroy',
@@ -364,6 +367,7 @@ export async function handleSessionCommand(
         session_id: sessionId,
         queue_length: 0,
       })
+      emitSessionStatus(ctx.nsp, sessionId, state, ctx.profile)
       emitCommand({
         action: 'destroy',
         message: bridgeReachable
@@ -387,6 +391,7 @@ function clearTransientRunState(state: SessionState) {
   state.runId = undefined
   state.abortController = undefined
   state.isAborting = false
+  state.pendingApproval = null
 }
 
 function ensureCommandSession(sessionId: string, ctx: SessionCommandContext) {

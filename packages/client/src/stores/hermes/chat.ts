@@ -1,14 +1,15 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, respondClarify, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, respondClarify, subscribeSessionStatus, type RunEvent, type ContentBlock as ContentBlockImport, type SessionRuntimeStatus } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
+import { createBrowserSync, type BrowserSyncEvent } from '@/utils/browser-sync'
 
 // Re-export ContentBlock for convenience
 export type ContentBlock = ContentBlockImport
@@ -64,6 +65,13 @@ export interface PendingClarify {
   choices: string[] | null
   timeoutMs: number
   requestedAt: number
+}
+
+export type SessionAttentionState = 'approval' | 'working' | 'unread' | 'read'
+
+interface SessionAttentionSnapshot {
+  unread: string[]
+  seenAt: Record<string, number>
 }
 
 export interface Session {
@@ -280,6 +288,8 @@ function mapHermesSession(s: SessionSummary): Session {
 
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
 const LEGACY_STORAGE_KEY = 'hermes_active_session'
+const SESSION_ATTENTION_STORAGE_PREFIX = 'hermes_session_attention_v1_'
+const browserSync = createBrowserSync<BrowserSyncEvent>('hermes-ui')
 
 // 获取当前 profile 名称，用于隔离缓存。
 // 从 profiles store 的 activeProfileName（同步 localStorage）读取，
@@ -294,6 +304,7 @@ function getProfileName(): string {
 
 function storageKey(): string { return STORAGE_KEY_PREFIX + getProfileName() }
 function legacyStorageKey(): string | null { return getProfileName() === 'default' ? LEGACY_STORAGE_KEY : null }
+function sessionAttentionStorageKey(): string { return SESSION_ATTENTION_STORAGE_PREFIX + getProfileName() }
 
 function isQuotaExceededError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
@@ -377,9 +388,14 @@ export const useChatStore = defineStore('chat', () => {
   /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
   const pendingApprovals = ref<Map<string, PendingApproval>>(new Map())
+  const runtimeStatuses = ref<Map<string, SessionRuntimeStatus>>(new Map())
+  const stopStatusSync = ref<(() => void) | null>(null)
+  const unreadSessionIds = ref<Set<string>>(new Set())
+  const sessionSeenAt = ref<Record<string, number>>({})
   const activePendingApproval = computed(() => {
     const sid = activeSessionId.value
-    return sid ? pendingApprovals.value.get(sid) || null : null
+    if (!sid) return null
+    return pendingApprovals.value.get(sid) || runtimePendingApproval(sid) || null
   })
 
   const pendingClarifies = ref<Map<string, PendingClarify>>(new Map())
@@ -433,7 +449,152 @@ export const useChatStore = defineStore('chat', () => {
   const messages = computed<Message[]>(() => activeSession.value?.messages || [])
 
   function isSessionLive(sessionId: string): boolean {
-    return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
+    return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId) || runtimeStatuses.value.get(sessionId)?.isWorking === true
+  }
+
+  function publishSessionAttentionChanged(): void {
+    browserSync.publish({ type: 'session-attention.changed', profile: getProfileName(), sourceId: browserSync.sourceId })
+  }
+
+  function persistSessionAttentionState(): void {
+    const snapshot: SessionAttentionSnapshot = {
+      unread: Array.from(unreadSessionIds.value),
+      seenAt: { ...sessionSeenAt.value },
+    }
+    setItemBestEffort(sessionAttentionStorageKey(), JSON.stringify(snapshot))
+  }
+
+  function loadSessionAttentionState(): void {
+    const raw = getItemBestEffort(sessionAttentionStorageKey())
+    if (!raw) {
+      unreadSessionIds.value = new Set()
+      sessionSeenAt.value = {}
+      return
+    }
+    try {
+      const parsed = JSON.parse(raw) as Partial<SessionAttentionSnapshot>
+      const unread = Array.isArray(parsed.unread)
+        ? parsed.unread.filter((id): id is string => typeof id === 'string' && id.length > 0)
+        : []
+      const seenAt = parsed.seenAt && typeof parsed.seenAt === 'object'
+        ? Object.fromEntries(Object.entries(parsed.seenAt).filter(([key, value]) => key && typeof value === 'number'))
+        : {}
+      unreadSessionIds.value = new Set(unread)
+      sessionSeenAt.value = seenAt
+    } catch {
+      unreadSessionIds.value = new Set()
+      sessionSeenAt.value = {}
+    }
+  }
+
+  function markSessionUnread(sessionId: string): void {
+    if (!sessionId || unreadSessionIds.value.has(sessionId)) return
+    unreadSessionIds.value.add(sessionId)
+    unreadSessionIds.value = new Set(unreadSessionIds.value)
+    persistSessionAttentionState()
+    publishSessionAttentionChanged()
+  }
+
+  function markSessionRead(sessionId: string): void {
+    if (!sessionId) return
+    const wasUnread = unreadSessionIds.value.delete(sessionId)
+    if (!wasUnread && sessionSeenAt.value[sessionId]) return
+    sessionSeenAt.value = { ...sessionSeenAt.value, [sessionId]: Date.now() }
+    if (wasUnread) unreadSessionIds.value = new Set(unreadSessionIds.value)
+    persistSessionAttentionState()
+    publishSessionAttentionChanged()
+  }
+
+  function runtimePendingApproval(sessionId: string): PendingApproval | null {
+    const pending = runtimeStatuses.value.get(sessionId)?.pendingApproval
+    if (!pending) return null
+    const choices = Array.isArray(pending.choices)
+      ? pending.choices.filter((choice): choice is PendingApproval['choices'][number] =>
+        choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
+      : []
+    return {
+      sessionId,
+      approvalId: pending.approval_id,
+      command: pending.command || '',
+      description: pending.description || '',
+      choices: choices.length ? choices : ['once', 'deny'],
+      allowPermanent: Boolean(pending.allow_permanent),
+      requestedAt: pending.requested_at || Date.now(),
+    }
+  }
+
+  function hasPendingApproval(sessionId: string): boolean {
+    return pendingApprovals.value.has(sessionId) || Boolean(runtimeStatuses.value.get(sessionId)?.pendingApproval)
+  }
+
+  function sessionAttentionState(sessionId: string): SessionAttentionState {
+    if (hasPendingApproval(sessionId)) return 'approval'
+    if (isSessionLive(sessionId)) return 'working'
+    if (unreadSessionIds.value.has(sessionId)) return 'unread'
+    return 'read'
+  }
+
+  function isDocumentVisible(): boolean {
+    return typeof document === 'undefined' || document.visibilityState === 'visible'
+  }
+
+  function noteAgentActivity(sessionId: string): void {
+    if (!sessionId) return
+    if (activeSessionId.value === sessionId && isDocumentVisible()) {
+      if (unreadSessionIds.value.has(sessionId)) markSessionRead(sessionId)
+    } else {
+      markSessionUnread(sessionId)
+    }
+  }
+
+  /** @internal test-only hook for live-state priority tests. */
+  function _setSessionLiveForTest(sessionId: string, live: boolean): void {
+    if (live) serverWorking.value.add(sessionId)
+    else serverWorking.value.delete(sessionId)
+    serverWorking.value = new Set(serverWorking.value)
+  }
+
+  loadSessionAttentionState()
+
+  browserSync.subscribe(event => {
+    if (event.sourceId === browserSync.sourceId) return
+    if (event.type !== 'session-attention.changed') return
+    if (event.profile !== getProfileName()) return
+    loadSessionAttentionState()
+  })
+
+  watch(
+    () => useProfilesStore().activeProfileName,
+    () => {
+      loadSessionAttentionState()
+      runtimeStatuses.value = new Map()
+    },
+  )
+
+  function applyRuntimeStatus(status: SessionRuntimeStatus): void {
+    if (!status.session_id || status.profile !== getProfileName()) return
+    const next = new Map(runtimeStatuses.value)
+    next.set(status.session_id, status)
+    runtimeStatuses.value = next
+  }
+
+  function applyRuntimeSnapshot(payload: { profile: string; sessions: SessionRuntimeStatus[] }): void {
+    if (payload.profile !== getProfileName()) return
+    runtimeStatuses.value = new Map(payload.sessions.map(status => [status.session_id, status]))
+  }
+
+  function startSessionStatusSync(profile = getProfileName()): () => void {
+    stopStatusSync.value?.()
+    runtimeStatuses.value = new Map()
+    stopStatusSync.value = subscribeSessionStatus(profile, {
+      onSnapshot: applyRuntimeSnapshot,
+      onUpdate: applyRuntimeStatus,
+    })
+    return () => {
+      stopStatusSync.value?.()
+      stopStatusSync.value = null
+      runtimeStatuses.value = new Map()
+    }
   }
 
   function clearActiveSession() {
@@ -549,6 +710,7 @@ export const useChatStore = defineStore('chat', () => {
     clearThinkingObservationFor(sessionId)
     activeSessionId.value = sessionId
     focusMessageId.value = focusId ?? null
+    markSessionRead(sessionId)
     setItemBestEffort(storageKey(), sessionId)
     const legacyActiveKey = legacyStorageKey()
     if (legacyActiveKey) removeItem(legacyActiveKey)
@@ -1372,6 +1534,7 @@ export const useChatStore = defineStore('chat', () => {
             case 'thinking.delta': {
               const text = evt.text || evt.delta || ''
               if (!text) break
+              noteAgentActivity(sid)
               runProducedAssistantText = true
               const msgs = getSessionMsgs(sid)
               const last = activeAssistantMessageId
@@ -1415,7 +1578,10 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'message.delta': {
-              if (evt.delta) runProducedAssistantText = true
+              if (evt.delta) {
+                runProducedAssistantText = true
+                noteAgentActivity(sid)
+              }
               const msgs = getSessionMsgs(sid)
               const last = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -1446,6 +1612,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'tool.started': {
               runHadToolActivity = true
+              noteAgentActivity(sid)
               const msgs = getSessionMsgs(sid)
               const toolCallId = (evt as any).tool_call_id as string | undefined
               const last = activeAssistantMessageId
@@ -1484,6 +1651,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'tool.completed': {
               runHadToolActivity = true
+              noteAgentActivity(sid)
               const msgs = getSessionMsgs(sid)
               const toolCallId = (evt as any).tool_call_id as string | undefined
               const toolMsgs = toolCallId
@@ -1510,6 +1678,7 @@ export const useChatStore = defineStore('chat', () => {
             case 'subagent.complete': {
               runHadToolActivity = true
               handleSubagentEvent(sid, evt)
+              noteAgentActivity(sid)
               break
             }
 
@@ -1614,6 +1783,10 @@ export const useChatStore = defineStore('chat', () => {
                 playCompletionBellIfEnabled()
               }
 
+              if (runProducedAssistantText || finalOutputTrimmed !== '' || swallowedError) {
+                noteAgentActivity(sid)
+              }
+
               // 自动播放语音
               if (autoPlaySpeechEnabled.value) {
                 const msgs = getSessionMsgs(sid)
@@ -1646,6 +1819,7 @@ export const useChatStore = defineStore('chat', () => {
                 }
               }
               addAgentErrorMessage(sid, evt.error)
+              noteAgentActivity(sid)
               const msgs = getSessionMsgs(sid)
               msgs.forEach((m, i) => {
                 if (m.role === 'tool' && m.toolStatus === 'running') {
@@ -1685,6 +1859,7 @@ export const useChatStore = defineStore('chat', () => {
         (err) => {
           console.warn('Socket.IO run stream error:', err.message)
           addAgentErrorMessage(sid, err.message)
+          noteAgentActivity(sid)
           const msgs = getSessionMsgs(sid)
           msgs.forEach((m, i) => {
             if (m.role === 'tool' && m.toolStatus === 'running') {
@@ -1842,6 +2017,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'thinking.delta': {
           const text = evt.text || evt.delta || ''
           if (!text) break
+          noteAgentActivity(sid)
           runProducedAssistantText = true
           const msgs = getSessionMsgs(sid)
           const last = activeAssistantMessageId
@@ -1878,7 +2054,10 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'message.delta': {
-          if (evt.delta) runProducedAssistantText = true
+          if (evt.delta) {
+            runProducedAssistantText = true
+            noteAgentActivity(sid)
+          }
           const msgs = getSessionMsgs(sid)
           const last = activeAssistantMessageId
             ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -1908,6 +2087,7 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'tool.started': {
           runHadToolActivity = true
+          noteAgentActivity(sid)
           const msgs = getSessionMsgs(sid)
           const toolCallId = (evt as any).tool_call_id as string | undefined
           const last = activeAssistantMessageId
@@ -1946,6 +2126,7 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'tool.completed': {
           runHadToolActivity = true
+          noteAgentActivity(sid)
           const msgs = getSessionMsgs(sid)
           const toolCallId = (evt as any).tool_call_id as string | undefined
           const toolMsgs = toolCallId
@@ -1970,6 +2151,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'subagent.complete': {
           runHadToolActivity = true
           handleSubagentEvent(sid, evt)
+          noteAgentActivity(sid)
           break
         }
 
@@ -2060,6 +2242,10 @@ export const useChatStore = defineStore('chat', () => {
             playCompletionBellIfEnabled()
           }
 
+          if (runProducedAssistantText || finalOutputTrimmed !== '' || swallowedError) {
+            noteAgentActivity(sid)
+          }
+
           // Auto-play speech for every completed assistant message
           if (autoPlaySpeechEnabled.value) {
             const msgs = getSessionMsgs(sid)
@@ -2098,6 +2284,7 @@ export const useChatStore = defineStore('chat', () => {
             queueLengths.value.delete(sid)
           }
           addAgentErrorMessage(sid, evt.error)
+          noteAgentActivity(sid)
           const msgs = getSessionMsgs(sid)
           msgs.forEach((m, i) => {
             if (m.role === 'tool' && m.toolStatus === 'running') {
@@ -2327,6 +2514,15 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     isRunActive,
     isSessionLive,
+    sessionAttentionState,
+    hasPendingApproval,
+    markSessionUnread,
+    markSessionRead,
+    noteAgentActivity,
+    loadSessionAttentionState,
+    persistSessionAttentionState,
+    startSessionStatusSync,
+    _setSessionLiveForTest,
     sessionProfileFilter,
     compressionState,
     abortState,

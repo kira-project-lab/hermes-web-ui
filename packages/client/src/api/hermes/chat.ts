@@ -28,6 +28,30 @@ export interface StartRunResponse {
   status: string
 }
 
+export interface SessionPendingApproval {
+  approval_id: string
+  command: string
+  description: string
+  choices: string[]
+  allow_permanent: boolean
+  requested_at?: number
+}
+
+export interface SessionRuntimeStatus {
+  session_id: string
+  profile: string
+  isWorking: boolean
+  isAborting?: boolean
+  queueLength?: number
+  pendingApproval?: SessionPendingApproval | null
+  updatedAt: number
+}
+
+export interface SessionStatusSnapshotPayload {
+  profile: string
+  sessions: SessionRuntimeStatus[]
+}
+
 // SSE event types from /v1/runs/{id}/events
 export interface RunEvent {
   event: string
@@ -478,6 +502,25 @@ export function respondToolApproval(
 
 export function getChatRunSocket(): Socket | null {
   return chatRunSocket
+}
+
+export function subscribeSessionStatus(
+  profile: string,
+  handlers: {
+    onSnapshot: (payload: SessionStatusSnapshotPayload) => void
+    onUpdate: (status: SessionRuntimeStatus) => void
+  },
+): () => void {
+  const socket = connectChatRun(profile)
+  const onSnapshot = (payload: SessionStatusSnapshotPayload) => handlers.onSnapshot(payload)
+  const onUpdate = (status: SessionRuntimeStatus) => handlers.onUpdate(status)
+  socket.on('session.status.snapshot', onSnapshot)
+  socket.on('session.status.updated', onUpdate)
+  socket.emit('subscribe_status', { profile })
+  return () => {
+    removeSocketListener(socket, 'session.status.snapshot', onSnapshot)
+    removeSocketListener(socket, 'session.status.updated', onUpdate)
+  }
 }
 
 export function connectChatRun(requestedProfile?: string | null): Socket {
