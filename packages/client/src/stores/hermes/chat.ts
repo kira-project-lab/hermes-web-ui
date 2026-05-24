@@ -1,4 +1,4 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, respondClarify, subscribeSessionStatus, type RunEvent, type ContentBlock as ContentBlockImport, type SessionRuntimeStatus } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, respondClarify, subscribeSessionStatus, type RunEvent, type ContentBlock as ContentBlockImport, type SessionRuntimeStatus, type SessionListChangedPayload } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
@@ -630,21 +630,26 @@ export const useChatStore = defineStore('chat', () => {
 
   function profilesNeedingStatusSync(): string[] {
     const profiles = new Set<string>()
-    profiles.add(normalizeProfileName(getProfileName()))
+    profiles.add(getProfileName())
+    if (sessionProfileFilter.value) profiles.add(sessionProfileFilter.value)
     for (const session of sessions.value) {
-      profiles.add(normalizeProfileName(session.profile || getProfileName()))
+      profiles.add(session.profile || getProfileName())
     }
     return [...profiles]
   }
 
-  function scheduleSessionListRefresh(profile: string): void {
+  function scheduleSessionListRefresh(profile: string, reason?: SessionListChangedPayload['reason'], sessionId?: string): void {
     const normalizedProfile = normalizeProfileName(profile || getProfileName())
     const existing = sessionListRefreshTimers.get(normalizedProfile)
     if (existing) clearTimeout(existing)
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       sessionListRefreshTimers.delete(normalizedProfile)
       const refreshProfile = sessionProfileFilter.value
-      void loadSessions(refreshProfile, null, { preserveActive: true, switchIfMissing: false })
+      const shouldClearDeletedActive = reason === 'deleted' && sessionId === activeSessionId.value
+      await loadSessions(refreshProfile, null, { preserveActive: true, switchIfMissing: false })
+      if (shouldClearDeletedActive && activeSessionId.value && !sessions.value.some(s => s.id === activeSessionId.value)) {
+        clearActiveSession()
+      }
     }, 150)
     sessionListRefreshTimers.set(normalizedProfile, timer)
   }
@@ -657,7 +662,7 @@ export const useChatStore = defineStore('chat', () => {
         onSnapshot: applyRuntimeSnapshot,
         onUpdate: applyRuntimeStatus,
         onSessionListChanged: payload => {
-          if (payload.profile) scheduleSessionListRefresh(payload.profile)
+          if (payload.profile) scheduleSessionListRefresh(payload.profile, payload.reason, payload.session_id)
         },
       })
       statusSubscriptions.set(profile, stop)
