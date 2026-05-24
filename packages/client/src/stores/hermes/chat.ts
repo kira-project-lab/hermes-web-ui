@@ -66,6 +66,13 @@ export interface PendingClarify {
   requestedAt: number
 }
 
+export type SessionAttentionState = 'approval' | 'working' | 'unread' | 'read'
+
+interface SessionAttentionSnapshot {
+  unread: string[]
+  seenAt: Record<string, number>
+}
+
 export interface Session {
   id: string
   profile?: string
@@ -280,6 +287,7 @@ function mapHermesSession(s: SessionSummary): Session {
 
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
 const LEGACY_STORAGE_KEY = 'hermes_active_session'
+const SESSION_ATTENTION_STORAGE_PREFIX = 'hermes_session_attention_v1_'
 
 // 获取当前 profile 名称，用于隔离缓存。
 // 从 profiles store 的 activeProfileName（同步 localStorage）读取，
@@ -294,6 +302,7 @@ function getProfileName(): string {
 
 function storageKey(): string { return STORAGE_KEY_PREFIX + getProfileName() }
 function legacyStorageKey(): string | null { return getProfileName() === 'default' ? LEGACY_STORAGE_KEY : null }
+function sessionAttentionStorageKey(): string { return SESSION_ATTENTION_STORAGE_PREFIX + getProfileName() }
 
 function isQuotaExceededError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
@@ -377,6 +386,8 @@ export const useChatStore = defineStore('chat', () => {
   /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
   const pendingApprovals = ref<Map<string, PendingApproval>>(new Map())
+  const unreadSessionIds = ref<Set<string>>(new Set())
+  const sessionSeenAt = ref<Record<string, number>>({})
   const activePendingApproval = computed(() => {
     const sid = activeSessionId.value
     return sid ? pendingApprovals.value.get(sid) || null : null
@@ -435,6 +446,85 @@ export const useChatStore = defineStore('chat', () => {
   function isSessionLive(sessionId: string): boolean {
     return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
   }
+
+  function persistSessionAttentionState(): void {
+    const snapshot: SessionAttentionSnapshot = {
+      unread: Array.from(unreadSessionIds.value),
+      seenAt: { ...sessionSeenAt.value },
+    }
+    setItemBestEffort(sessionAttentionStorageKey(), JSON.stringify(snapshot))
+  }
+
+  function loadSessionAttentionState(): void {
+    const raw = getItemBestEffort(sessionAttentionStorageKey())
+    if (!raw) {
+      unreadSessionIds.value = new Set()
+      sessionSeenAt.value = {}
+      return
+    }
+    try {
+      const parsed = JSON.parse(raw) as Partial<SessionAttentionSnapshot>
+      const unread = Array.isArray(parsed.unread)
+        ? parsed.unread.filter((id): id is string => typeof id === 'string' && id.length > 0)
+        : []
+      const seenAt = parsed.seenAt && typeof parsed.seenAt === 'object'
+        ? Object.fromEntries(Object.entries(parsed.seenAt).filter(([key, value]) => key && typeof value === 'number'))
+        : {}
+      unreadSessionIds.value = new Set(unread)
+      sessionSeenAt.value = seenAt
+    } catch {
+      unreadSessionIds.value = new Set()
+      sessionSeenAt.value = {}
+    }
+  }
+
+  function markSessionUnread(sessionId: string): void {
+    if (!sessionId || unreadSessionIds.value.has(sessionId)) return
+    unreadSessionIds.value.add(sessionId)
+    unreadSessionIds.value = new Set(unreadSessionIds.value)
+    persistSessionAttentionState()
+  }
+
+  function markSessionRead(sessionId: string): void {
+    if (!sessionId) return
+    const wasUnread = unreadSessionIds.value.delete(sessionId)
+    sessionSeenAt.value = { ...sessionSeenAt.value, [sessionId]: Date.now() }
+    if (wasUnread) unreadSessionIds.value = new Set(unreadSessionIds.value)
+    persistSessionAttentionState()
+  }
+
+  function hasPendingApproval(sessionId: string): boolean {
+    return pendingApprovals.value.has(sessionId)
+  }
+
+  function sessionAttentionState(sessionId: string): SessionAttentionState {
+    if (hasPendingApproval(sessionId)) return 'approval'
+    if (isSessionLive(sessionId)) return 'working'
+    if (unreadSessionIds.value.has(sessionId)) return 'unread'
+    return 'read'
+  }
+
+  function isDocumentVisible(): boolean {
+    return typeof document === 'undefined' || document.visibilityState === 'visible'
+  }
+
+  function noteAgentActivity(sessionId: string): void {
+    if (!sessionId) return
+    if (activeSessionId.value === sessionId && isDocumentVisible()) {
+      markSessionRead(sessionId)
+    } else {
+      markSessionUnread(sessionId)
+    }
+  }
+
+  /** @internal test-only hook for live-state priority tests. */
+  function _setSessionLiveForTest(sessionId: string, live: boolean): void {
+    if (live) serverWorking.value.add(sessionId)
+    else serverWorking.value.delete(sessionId)
+    serverWorking.value = new Set(serverWorking.value)
+  }
+
+  loadSessionAttentionState()
 
   function clearActiveSession() {
     activeSessionId.value = null
@@ -549,6 +639,7 @@ export const useChatStore = defineStore('chat', () => {
     clearThinkingObservationFor(sessionId)
     activeSessionId.value = sessionId
     focusMessageId.value = focusId ?? null
+    markSessionRead(sessionId)
     setItemBestEffort(storageKey(), sessionId)
     const legacyActiveKey = legacyStorageKey()
     if (legacyActiveKey) removeItem(legacyActiveKey)
@@ -2327,6 +2418,14 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     isRunActive,
     isSessionLive,
+    sessionAttentionState,
+    hasPendingApproval,
+    markSessionUnread,
+    markSessionRead,
+    noteAgentActivity,
+    loadSessionAttentionState,
+    persistSessionAttentionState,
+    _setSessionLiveForTest,
     sessionProfileFilter,
     compressionState,
     abortState,
