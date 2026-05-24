@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { useProfilesStore } from './profiles'
+import { createBrowserSync, type BrowserSyncEvent } from '@/utils/browser-sync'
 
 const PIN_KEY_PREFIX = 'hermes_session_pins_v1_'
 const HUMAN_ONLY_KEY_PREFIX = 'hermes_human_only_v1_'
+const browserSync = createBrowserSync<BrowserSyncEvent>('hermes-ui')
 
 function currentProfileName(): string {
   try {
@@ -56,10 +58,16 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
 
   function persistPins() {
     saveJson(pinsKey(profileName.value), pinnedIds.value)
+    publishPrefsChanged()
   }
 
   function persistHumanOnly() {
     saveJson(humanOnlyKey(profileName.value), humanOnly.value)
+    publishPrefsChanged()
+  }
+
+  function publishPrefsChanged() {
+    browserSync.publish({ type: 'session-prefs.changed', profile: profileName.value, sourceId: browserSync.sourceId })
   }
 
   function isPinned(sessionId: string): boolean {
@@ -102,6 +110,13 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
     () => useProfilesStore().activeProfileName,
     () => reload(),
   )
+
+  browserSync.subscribe(event => {
+    if (event.sourceId === browserSync.sourceId) return
+    if (event.type !== 'session-prefs.changed') return
+    if (event.profile !== profileName.value) return
+    reload()
+  })
 
   return {
     profileName,

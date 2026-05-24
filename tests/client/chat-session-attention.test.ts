@@ -4,6 +4,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore, type Session } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
+const statusMock = vi.hoisted(() => ({
+  handlers: null as null | { onSnapshot: (payload: any) => void; onUpdate: (status: any) => void },
+}))
+
 const resumeSessionMock = vi.fn((sessionId: string, cb: (data: any) => void) => {
   cb({ session_id: sessionId, isWorking: false, queueLength: 0, messages: [] })
 })
@@ -16,6 +20,10 @@ vi.mock('@/api/hermes/chat', () => ({
   getChatRunSocket: vi.fn(() => null),
   respondToolApproval: vi.fn(),
   onPeerUserMessage: vi.fn(),
+  subscribeSessionStatus: vi.fn((_profile: string, handlers: any) => {
+    statusMock.handlers = handlers
+    return vi.fn(() => { statusMock.handlers = null })
+  }),
 }))
 
 vi.mock('@/api/hermes/sessions', () => ({
@@ -53,6 +61,7 @@ function setProfile(name: string) {
 describe('chat store session attention state', () => {
   beforeEach(() => {
     localStorage.clear()
+    statusMock.handlers = null
     resumeSessionMock.mockClear()
     setActivePinia(createPinia())
     setProfile('research')
@@ -202,5 +211,61 @@ describe('chat store session attention state', () => {
     store.noteAgentActivity('session-active')
 
     expect(store.sessionAttentionState('session-active')).toBe('unread')
+  })
+
+  it('reloads read state from external browser sync events', () => {
+    const store = useChatStore()
+    store.markSessionUnread('session-1')
+    expect(store.sessionAttentionState('session-1')).toBe('unread')
+
+    localStorage.setItem('hermes_session_attention_v1_research', JSON.stringify({
+      unread: [],
+      seenAt: { 'session-1': Date.now() },
+    }))
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: 'hermes.browserSync.hermes-ui',
+      newValue: JSON.stringify({
+        event: { type: 'session-attention.changed', profile: 'research', sourceId: 'external-tab' },
+        at: Date.now(),
+      }),
+    }))
+
+    expect(store.sessionAttentionState('session-1')).toBe('read')
+  })
+
+  it('uses runtime status feed for working and approval attention states', () => {
+    const store = useChatStore()
+    store.startSessionStatusSync('research')
+
+    statusMock.handlers?.onSnapshot({
+      profile: 'research',
+      sessions: [{ session_id: 'session-1', profile: 'research', isWorking: true, updatedAt: Date.now() }],
+    })
+    expect(store.sessionAttentionState('session-1')).toBe('working')
+
+    statusMock.handlers?.onUpdate({
+      session_id: 'session-1',
+      profile: 'research',
+      isWorking: true,
+      pendingApproval: {
+        approval_id: 'approval-1',
+        command: 'touch file',
+        description: 'Need permission',
+        choices: ['once', 'deny'],
+        allow_permanent: false,
+        requested_at: 123,
+      },
+      updatedAt: Date.now(),
+    })
+    expect(store.sessionAttentionState('session-1')).toBe('approval')
+
+    statusMock.handlers?.onUpdate({
+      session_id: 'session-1',
+      profile: 'research',
+      isWorking: false,
+      pendingApproval: null,
+      updatedAt: Date.now(),
+    })
+    expect(store.sessionAttentionState('session-1')).toBe('read')
   })
 })

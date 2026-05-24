@@ -50,6 +50,8 @@ export interface SessionState {
   contextTokens?: number
   bridgeContext?: BridgeContextState
   isAborting?: boolean
+  pendingApproval?: SessionPendingApproval | null
+  lastStatusUpdatedAt?: number
   queue: QueuedRun[]
   responseRun?: ResponseRunState
   source?: ChatRunSource
@@ -65,6 +67,25 @@ export interface SessionState {
     startedAt: number
   }>
   bridgeCompressionResults?: Record<string, BridgeCompressionResult>
+}
+
+export interface SessionPendingApproval {
+  approval_id: string
+  command: string
+  description: string
+  choices: string[]
+  allow_permanent: boolean
+  requested_at?: number
+}
+
+export interface SessionRuntimeStatus {
+  session_id: string
+  profile: string
+  isWorking: boolean
+  isAborting?: boolean
+  queueLength?: number
+  pendingApproval?: SessionPendingApproval | null
+  updatedAt: number
 }
 
 export interface ResponseRunState {

@@ -21,6 +21,7 @@ import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
+import { emitSessionStatus, sessionRuntimeStatusSnapshot, sessionStatusRoom } from './status-feed'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
 
@@ -97,6 +98,23 @@ export class ChatRunSocket {
       return profile
     }
 
+    socket.on('subscribe_status', (data: { profile?: string }) => {
+      try {
+        const profile = resolveRunProfile(undefined, data.profile)
+        socket.join(sessionStatusRoom(profile))
+        socket.emit('session.status.snapshot', {
+          profile,
+          sessions: sessionRuntimeStatusSnapshot(profile, this.sessionMap),
+        })
+      } catch (err) {
+        socket.emit('session.status.snapshot', {
+          profile: data.profile || currentProfile(),
+          sessions: [],
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })
+
     socket.on('run', async (data: {
       input: string | ContentBlock[]
       session_id?: string
@@ -165,6 +183,7 @@ export class ChatRunSocket {
             queue_length: state.queue.length,
             queued_messages: this.serializeQueuedMessages(state.queue),
           })
+          emitSessionStatus(this.nsp, data.session_id, state, runProfile)
           logger.info('[chat-run-socket] queued run for session %s (queue: %d)', data.session_id, state.queue.length)
           return
         }
@@ -172,6 +191,7 @@ export class ChatRunSocket {
         state.isWorking = true
         state.profile = runProfile
         state.source = source
+        emitSessionStatus(this.nsp, data.session_id, state, runProfile)
       }
       try {
         await this.handleRun(socket, data, runProfile)
@@ -181,6 +201,7 @@ export class ChatRunSocket {
           if (state && !state.runId && !state.abortController && !state.activeRunMarker) {
             state.isWorking = false
             state.profile = undefined
+            emitSessionStatus(this.nsp, data.session_id, state, runProfile)
           }
         }
         socket.emit('run.failed', {
@@ -204,6 +225,7 @@ export class ChatRunSocket {
         queue_length: state.queue.length,
         queued_messages: this.serializeQueuedMessages(state.queue),
       })
+      emitSessionStatus(this.nsp, data.session_id, state)
       logger.info('[chat-run-socket] cancelled queued run %s for session %s (queue: %d)',
         data.queue_id, data.session_id, state.queue.length)
     })
@@ -225,6 +247,11 @@ export class ChatRunSocket {
       if (!data.session_id || !data.approval_id) return
       try {
         const result = await this.bridge.approvalRespond(data.approval_id, data.choice || 'deny')
+        const state = this.sessionMap.get(data.session_id)
+        if (state) {
+          state.pendingApproval = null
+          emitSessionStatus(this.nsp, data.session_id, state)
+        }
         this.emitToSession(socket, data.session_id, 'approval.resolved', {
           event: 'approval.resolved',
           approval_id: data.approval_id,
@@ -232,6 +259,11 @@ export class ChatRunSocket {
           resolved: Boolean(result.resolved),
         })
       } catch (err) {
+        const state = this.sessionMap.get(data.session_id)
+        if (state) {
+          state.pendingApproval = null
+          emitSessionStatus(this.nsp, data.session_id, state)
+        }
         this.emitToSession(socket, data.session_id, 'approval.resolved', {
           event: 'approval.resolved',
           approval_id: data.approval_id,

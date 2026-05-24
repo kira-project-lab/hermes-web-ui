@@ -1,14 +1,15 @@
-import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, respondClarify, type RunEvent, type ContentBlock as ContentBlockImport } from '@/api/hermes/chat'
+import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, respondClarify, subscribeSessionStatus, type RunEvent, type ContentBlock as ContentBlockImport, type SessionRuntimeStatus } from '@/api/hermes/chat'
 import { deleteSession as deleteSessionApi, fetchSession, fetchSessions, setSessionModel, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
 import { getActiveProfileName } from '@/api/client'
 import { getDownloadUrl } from '@/api/hermes/download'
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
+import { createBrowserSync, type BrowserSyncEvent } from '@/utils/browser-sync'
 
 // Re-export ContentBlock for convenience
 export type ContentBlock = ContentBlockImport
@@ -288,6 +289,7 @@ function mapHermesSession(s: SessionSummary): Session {
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
 const LEGACY_STORAGE_KEY = 'hermes_active_session'
 const SESSION_ATTENTION_STORAGE_PREFIX = 'hermes_session_attention_v1_'
+const browserSync = createBrowserSync<BrowserSyncEvent>('hermes-ui')
 
 // 获取当前 profile 名称，用于隔离缓存。
 // 从 profiles store 的 activeProfileName（同步 localStorage）读取，
@@ -386,11 +388,14 @@ export const useChatStore = defineStore('chat', () => {
   /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
   const pendingApprovals = ref<Map<string, PendingApproval>>(new Map())
+  const runtimeStatuses = ref<Map<string, SessionRuntimeStatus>>(new Map())
+  const stopStatusSync = ref<(() => void) | null>(null)
   const unreadSessionIds = ref<Set<string>>(new Set())
   const sessionSeenAt = ref<Record<string, number>>({})
   const activePendingApproval = computed(() => {
     const sid = activeSessionId.value
-    return sid ? pendingApprovals.value.get(sid) || null : null
+    if (!sid) return null
+    return pendingApprovals.value.get(sid) || runtimePendingApproval(sid) || null
   })
 
   const pendingClarifies = ref<Map<string, PendingClarify>>(new Map())
@@ -444,7 +449,11 @@ export const useChatStore = defineStore('chat', () => {
   const messages = computed<Message[]>(() => activeSession.value?.messages || [])
 
   function isSessionLive(sessionId: string): boolean {
-    return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
+    return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId) || runtimeStatuses.value.get(sessionId)?.isWorking === true
+  }
+
+  function publishSessionAttentionChanged(): void {
+    browserSync.publish({ type: 'session-attention.changed', profile: getProfileName(), sourceId: browserSync.sourceId })
   }
 
   function persistSessionAttentionState(): void {
@@ -483,6 +492,7 @@ export const useChatStore = defineStore('chat', () => {
     unreadSessionIds.value.add(sessionId)
     unreadSessionIds.value = new Set(unreadSessionIds.value)
     persistSessionAttentionState()
+    publishSessionAttentionChanged()
   }
 
   function markSessionRead(sessionId: string): void {
@@ -492,10 +502,29 @@ export const useChatStore = defineStore('chat', () => {
     sessionSeenAt.value = { ...sessionSeenAt.value, [sessionId]: Date.now() }
     if (wasUnread) unreadSessionIds.value = new Set(unreadSessionIds.value)
     persistSessionAttentionState()
+    publishSessionAttentionChanged()
+  }
+
+  function runtimePendingApproval(sessionId: string): PendingApproval | null {
+    const pending = runtimeStatuses.value.get(sessionId)?.pendingApproval
+    if (!pending) return null
+    const choices = Array.isArray(pending.choices)
+      ? pending.choices.filter((choice): choice is PendingApproval['choices'][number] =>
+        choice === 'once' || choice === 'session' || choice === 'always' || choice === 'deny')
+      : []
+    return {
+      sessionId,
+      approvalId: pending.approval_id,
+      command: pending.command || '',
+      description: pending.description || '',
+      choices: choices.length ? choices : ['once', 'deny'],
+      allowPermanent: Boolean(pending.allow_permanent),
+      requestedAt: pending.requested_at || Date.now(),
+    }
   }
 
   function hasPendingApproval(sessionId: string): boolean {
-    return pendingApprovals.value.has(sessionId)
+    return pendingApprovals.value.has(sessionId) || Boolean(runtimeStatuses.value.get(sessionId)?.pendingApproval)
   }
 
   function sessionAttentionState(sessionId: string): SessionAttentionState {
@@ -526,6 +555,47 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   loadSessionAttentionState()
+
+  browserSync.subscribe(event => {
+    if (event.sourceId === browserSync.sourceId) return
+    if (event.type !== 'session-attention.changed') return
+    if (event.profile !== getProfileName()) return
+    loadSessionAttentionState()
+  })
+
+  watch(
+    () => useProfilesStore().activeProfileName,
+    () => {
+      loadSessionAttentionState()
+      runtimeStatuses.value = new Map()
+    },
+  )
+
+  function applyRuntimeStatus(status: SessionRuntimeStatus): void {
+    if (!status.session_id || status.profile !== getProfileName()) return
+    const next = new Map(runtimeStatuses.value)
+    next.set(status.session_id, status)
+    runtimeStatuses.value = next
+  }
+
+  function applyRuntimeSnapshot(payload: { profile: string; sessions: SessionRuntimeStatus[] }): void {
+    if (payload.profile !== getProfileName()) return
+    runtimeStatuses.value = new Map(payload.sessions.map(status => [status.session_id, status]))
+  }
+
+  function startSessionStatusSync(profile = getProfileName()): () => void {
+    stopStatusSync.value?.()
+    runtimeStatuses.value = new Map()
+    stopStatusSync.value = subscribeSessionStatus(profile, {
+      onSnapshot: applyRuntimeSnapshot,
+      onUpdate: applyRuntimeStatus,
+    })
+    return () => {
+      stopStatusSync.value?.()
+      stopStatusSync.value = null
+      runtimeStatuses.value = new Map()
+    }
+  }
 
   function clearActiveSession() {
     activeSessionId.value = null
@@ -2451,6 +2521,7 @@ export const useChatStore = defineStore('chat', () => {
     noteAgentActivity,
     loadSessionAttentionState,
     persistSessionAttentionState,
+    startSessionStatusSync,
     _setSessionLiveForTest,
     sessionProfileFilter,
     compressionState,
