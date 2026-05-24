@@ -5,6 +5,15 @@ export function sessionStatusRoom(profile: string): string {
   return `profile:${profile}:session-status`
 }
 
+export type SessionListChangedReason = 'created' | 'renamed' | 'deleted' | 'updated' | 'cleared'
+
+export interface SessionListChangedPayload {
+  profile: string
+  reason: SessionListChangedReason
+  session_id?: string
+  updatedAt: number
+}
+
 export function sessionRuntimeStatus(sessionId: string, state: SessionState) {
   const profile = state.profile || 'default'
   return {
@@ -49,4 +58,18 @@ export function emitSessionStatus(
     ...sessionRuntimeStatus(sessionId, state),
     profile,
   })
+}
+
+export function emitSessionListChanged(
+  nsp: ReturnType<Server['of']>,
+  profile: string,
+  reason: SessionListChangedReason,
+  sessionId?: string,
+): void {
+  nsp.to(sessionStatusRoom(profile)).emit('session.list.changed', {
+    profile,
+    reason,
+    session_id: sessionId,
+    updatedAt: Date.now(),
+  } satisfies SessionListChangedPayload)
 }

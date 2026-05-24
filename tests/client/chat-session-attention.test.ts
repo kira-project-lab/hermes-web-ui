@@ -5,7 +5,13 @@ import { useChatStore, type Session } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
 const statusMock = vi.hoisted(() => ({
-  handlers: null as null | { onSnapshot: (payload: any) => void; onUpdate: (status: any) => void },
+  handlers: null as null | { onSnapshot: (payload: any) => void; onUpdate: (status: any) => void; onSessionListChanged?: (payload: any) => void },
+  handlersByProfile: {} as Record<string, { onSnapshot: (payload: any) => void; onUpdate: (status: any) => void; onSessionListChanged?: (payload: any) => void }>,
+  stopsByProfile: {} as Record<string, ReturnType<typeof vi.fn>>,
+}))
+
+const sessionsApiMock = vi.hoisted(() => ({
+  fetchSessions: vi.fn(async () => [] as any[]),
 }))
 
 const resumeSessionMock = vi.fn((sessionId: string, cb: (data: any) => void) => {
@@ -20,16 +26,22 @@ vi.mock('@/api/hermes/chat', () => ({
   getChatRunSocket: vi.fn(() => null),
   respondToolApproval: vi.fn(),
   onPeerUserMessage: vi.fn(),
-  subscribeSessionStatus: vi.fn((_profile: string, handlers: any) => {
+  subscribeSessionStatus: vi.fn((profile: string, handlers: any) => {
     statusMock.handlers = handlers
-    return vi.fn(() => { statusMock.handlers = null })
+    statusMock.handlersByProfile[profile] = handlers
+    const stop = vi.fn(() => {
+      if (statusMock.handlers === handlers) statusMock.handlers = null
+      delete statusMock.handlersByProfile[profile]
+    })
+    statusMock.stopsByProfile[profile] = stop
+    return stop
   }),
 }))
 
 vi.mock('@/api/hermes/sessions', () => ({
   deleteSession: vi.fn(),
   fetchSession: vi.fn(),
-  fetchSessions: vi.fn(async () => []),
+  fetchSessions: sessionsApiMock.fetchSessions,
   setSessionModel: vi.fn(async () => true),
 }))
 
@@ -42,10 +54,10 @@ vi.mock('@/utils/completion-sound', () => ({
   playCompletionSound: vi.fn(async () => undefined),
 }))
 
-function makeSession(id: string): Session {
+function makeSession(id: string, profile = 'research'): Session {
   return {
     id,
-    profile: 'research',
+    profile,
     title: id,
     messages: [],
     createdAt: Date.now(),
@@ -62,6 +74,10 @@ describe('chat store session attention state', () => {
   beforeEach(() => {
     localStorage.clear()
     statusMock.handlers = null
+    statusMock.handlersByProfile = {}
+    statusMock.stopsByProfile = {}
+    sessionsApiMock.fetchSessions.mockReset()
+    sessionsApiMock.fetchSessions.mockResolvedValue([])
     resumeSessionMock.mockClear()
     setActivePinia(createPinia())
     setProfile('research')
@@ -237,13 +253,13 @@ describe('chat store session attention state', () => {
     const store = useChatStore()
     store.startSessionStatusSync('research')
 
-    statusMock.handlers?.onSnapshot({
+    statusMock.handlersByProfile.research?.onSnapshot({
       profile: 'research',
       sessions: [{ session_id: 'session-1', profile: 'research', isWorking: true, updatedAt: Date.now() }],
     })
     expect(store.sessionAttentionState('session-1')).toBe('working')
 
-    statusMock.handlers?.onUpdate({
+    statusMock.handlersByProfile.research?.onUpdate({
       session_id: 'session-1',
       profile: 'research',
       isWorking: true,
@@ -259,7 +275,7 @@ describe('chat store session attention state', () => {
     })
     expect(store.sessionAttentionState('session-1')).toBe('approval')
 
-    statusMock.handlers?.onUpdate({
+    statusMock.handlersByProfile.research?.onUpdate({
       session_id: 'session-1',
       profile: 'research',
       isWorking: false,
@@ -267,5 +283,61 @@ describe('chat store session attention state', () => {
       updatedAt: Date.now(),
     })
     expect(store.sessionAttentionState('session-1')).toBe('read')
+  })
+
+  it('shows runtime status for a non-active profile session', () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('other-session', 'personal')]
+    store.startSessionStatusSync('research')
+
+    expect(statusMock.handlersByProfile.research).toBeTruthy()
+    expect(statusMock.handlersByProfile.personal).toBeTruthy()
+
+    statusMock.handlersByProfile.personal?.onUpdate({
+      session_id: 'other-session',
+      profile: 'personal',
+      isWorking: true,
+      updatedAt: Date.now(),
+    })
+
+    expect(store.sessionAttentionState('other-session')).toBe('working')
+  })
+
+  it('subscribes to active and loaded session profiles after loading sessions', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    sessionsApiMock.fetchSessions.mockResolvedValue([
+      { id: 'session-research', profile: 'research', title: 'Research', started_at: now, last_active: now },
+      { id: 'session-personal', profile: 'personal', title: 'Personal', started_at: now, last_active: now },
+    ])
+    const store = useChatStore()
+
+    await store.loadSessions('research', null, { preserveActive: true, switchIfMissing: false })
+
+    expect(Object.keys(statusMock.handlersByProfile).sort()).toEqual(['personal', 'research'])
+  })
+
+  it('refreshes sessions without changing active session on list invalidation', async () => {
+    vi.useFakeTimers()
+    const now = Math.floor(Date.now() / 1000)
+    const store = useChatStore()
+    store.sessions = [makeSession('session-read-1')]
+    store.activeSessionId = 'session-read-1'
+    store.startSessionStatusSync('research')
+    sessionsApiMock.fetchSessions.mockResolvedValueOnce([
+      { id: 'new-session', profile: 'research', title: 'New', started_at: now, last_active: now },
+      { id: 'session-read-1', profile: 'research', title: 'Existing', started_at: now, last_active: now },
+    ])
+
+    statusMock.handlersByProfile.research?.onSessionListChanged?.({
+      profile: 'research',
+      reason: 'created',
+      session_id: 'new-session',
+      updatedAt: Date.now(),
+    })
+    await vi.advanceTimersByTimeAsync(151)
+
+    expect(store.activeSessionId).toBe('session-read-1')
+    expect(store.sessions.some((session: Session) => session.id === 'new-session')).toBe(true)
+    vi.useRealTimers()
   })
 })

@@ -52,6 +52,15 @@ export interface SessionStatusSnapshotPayload {
   sessions: SessionRuntimeStatus[]
 }
 
+export type SessionListChangedReason = 'created' | 'renamed' | 'deleted' | 'updated' | 'cleared'
+
+export interface SessionListChangedPayload {
+  profile: string
+  reason: SessionListChangedReason
+  session_id?: string
+  updatedAt: number
+}
+
 // SSE event types from /v1/runs/{id}/events
 export interface RunEvent {
   event: string
@@ -510,14 +519,17 @@ export function subscribeSessionStatus(
   handlers: {
     onSnapshot: (payload: SessionStatusSnapshotPayload) => void
     onUpdate: (status: SessionRuntimeStatus) => void
+    onSessionListChanged?: (payload: SessionListChangedPayload) => void
   },
 ): () => void {
   const socket = connectChatStatus(profile)
   const onSnapshot = (payload: SessionStatusSnapshotPayload) => handlers.onSnapshot(payload)
   const onUpdate = (status: SessionRuntimeStatus) => handlers.onUpdate(status)
+  const onSessionListChanged = (payload: SessionListChangedPayload) => handlers.onSessionListChanged?.(payload)
   const subscribe = () => socket.emit('subscribe_status', { profile })
   socket.on('session.status.snapshot', onSnapshot)
   socket.on('session.status.updated', onUpdate)
+  socket.on('session.list.changed', onSessionListChanged)
   socket.on('connect', subscribe)
   subscribe()
   return () => {
@@ -525,6 +537,7 @@ export function subscribeSessionStatus(
     removeSocketListener(socket, 'connect', subscribe)
     removeSocketListener(socket, 'session.status.snapshot', onSnapshot)
     removeSocketListener(socket, 'session.status.updated', onUpdate)
+    removeSocketListener(socket, 'session.list.changed', onSessionListChanged)
   }
 }
 
