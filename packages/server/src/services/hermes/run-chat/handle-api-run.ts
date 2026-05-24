@@ -13,6 +13,7 @@ import {
 } from '../../../db/hermes/session-store'
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger } from '../../logger'
+import { maybeGenerateSessionTitle } from '../session-title-generator'
 import { contentBlocksToString, extractTextForPreview, isContentBlockArray, convertContentBlocks } from './content-blocks'
 import { convertHistoryFormat } from './message-format'
 import { readSseFrames } from './sse-utils'
@@ -296,6 +297,7 @@ export async function handleApiRun(
         const finalOutput = parsed.response || parsed
         const finalText = extractResponseText(finalOutput)
         if (upstreamEvent === 'response.completed' && session_id) {
+          const completionProfile = sessionMap.get(session_id)?.profile || profile || 'default'
           const usage = finalOutput.usage || {}
           updateUsage(session_id, {
             inputTokens: usage.input_tokens ?? usage.inputTokens ?? 0,
@@ -305,6 +307,9 @@ export async function handleApiRun(
             reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens ?? 0,
             model: finalOutput.model || '',
             profile: sessionMap.get(session_id)?.profile,
+          })
+          void maybeGenerateSessionTitle(session_id, completionProfile, nsp).catch(err => {
+            logger.warn({ sessionId: session_id, error: err?.message || String(err) }, '[chat-run-socket] session title generation failed for API run')
           })
         }
         const eventName = upstreamEvent === 'response.completed' ? 'run.completed' : 'run.failed'

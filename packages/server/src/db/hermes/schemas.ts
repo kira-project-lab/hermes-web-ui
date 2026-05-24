@@ -36,6 +36,8 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   model: 'TEXT NOT NULL DEFAULT \'\'',
   provider: 'TEXT NOT NULL DEFAULT \'\'',
   title: 'TEXT',
+  title_source: "TEXT NOT NULL DEFAULT 'fallback'",
+  title_generated_at: 'INTEGER',
   started_at: 'INTEGER NOT NULL',
   ended_at: 'INTEGER',
   end_reason: 'TEXT',

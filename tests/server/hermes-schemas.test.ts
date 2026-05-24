@@ -35,6 +35,12 @@ describe('Hermes schema initialization', () => {
     expect(tables.map(t => t.name)).toContain(USERS_TABLE)
     expect(tables.map(t => t.name)).toContain(USER_PROFILES_TABLE)
 
+    // Verify SESSIONS_TABLE structure
+    const sessionCols = db.prepare(`PRAGMA table_info("${SESSIONS_TABLE}")`).all() as Array<{ name: string }>
+    expect(sessionCols.some(c => c.name === 'id')).toBe(true)
+    expect(sessionCols.some(c => c.name === 'title_source')).toBe(true)
+    expect(sessionCols.some(c => c.name === 'title_generated_at')).toBe(true)
+
     // Verify USAGE_TABLE structure
     const usageCols = db.prepare(`PRAGMA table_info("${USAGE_TABLE}")`).all() as Array<{ name: string }>
     expect(usageCols.some(c => c.name === 'id')).toBe(true)

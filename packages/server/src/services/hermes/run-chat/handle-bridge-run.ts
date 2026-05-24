@@ -8,6 +8,7 @@ import { getSystemPrompt } from '../../../lib/llm-prompt'
 import { getSession, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger, bridgeLogger } from '../../logger'
+import { maybeGenerateSessionTitle } from '../session-title-generator'
 import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview, isContentBlockArray } from './content-blocks'
 import { buildCompressedHistory, buildDbHistory, buildSnapshotAwareHistory, forceCompressBridgeHistory, pushState, replaceState } from './compression'
@@ -730,6 +731,7 @@ async function applyBridgeChunkAsync(
     emit,
     bridge,
   })
+  const completionProfile = state.profile || profile || 'default'
   updateUsage(sessionId, {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
@@ -759,6 +761,11 @@ async function applyBridgeChunkAsync(
     outputTokens: usage.outputTokens,
     contextTokens,
     queue_remaining: state.queue.length,
+  }
+  if (!terminalError) {
+    void maybeGenerateSessionTitle(sessionId, completionProfile, nsp).catch(err => {
+      logger.warn({ sessionId, error: err?.message || String(err) }, '[chat-run-socket] session title generation failed for bridge run')
+    })
   }
   emit(eventName, payload)
   if (state.queue.length > 0) {
