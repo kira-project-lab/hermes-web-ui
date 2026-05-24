@@ -8,7 +8,7 @@ import { handleAbort } from './abort'
 import { calcAndUpdateUsage, contextTokensWithCachedOverhead, updateMessageContextTokenUsage } from './usage'
 import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
-import { emitSessionStatus } from './status-feed'
+import { emitSessionListChanged, emitSessionStatus } from './status-feed'
 
 type CommandName =
   | 'usage'
@@ -74,8 +74,11 @@ export async function handleSessionCommand(
 ): Promise<void> {
   const state = getOrCreateSession(ctx.sessionMap, sessionId)
   ctx.socket.join(`session:${sessionId}`)
-  ensureCommandSession(sessionId, ctx)
+  const createdForCommand = ensureCommandSession(sessionId, ctx)
   persistCommandMessage(sessionId, state, `/${command.rawName}${command.args ? ` ${command.args}` : ''}`)
+  if (createdForCommand && command.name !== 'title') {
+    emitSessionListChanged(ctx.nsp, ctx.profile, 'created', sessionId)
+  }
 
   const emitCommand = (payload: Record<string, unknown>) => {
     const message = typeof payload.message === 'string' ? payload.message : ''
@@ -206,6 +209,7 @@ export async function handleSessionCommand(
           clearHistory: true,
           message: `Cleared ${deleted} history messages from the database.`,
         })
+        emitSessionListChanged(ctx.nsp, ctx.profile, 'cleared', sessionId)
         return
       }
       emitCommand({
@@ -221,10 +225,9 @@ export async function handleSessionCommand(
         return
       }
       const title = command.args.slice(0, 120)
-      if (!getSession(sessionId)) {
-        createSession({ id: sessionId, profile: ctx.profile, source: 'cli', model: ctx.model, title })
-      }
+      const existed = !createdForCommand
       const updated = renameSession(sessionId, title)
+      if (updated) emitSessionListChanged(ctx.nsp, ctx.profile, existed ? 'renamed' : 'created', sessionId)
       emitCommand({
         ok: updated,
         action: 'title',
@@ -394,8 +397,8 @@ function clearTransientRunState(state: SessionState) {
   state.pendingApproval = null
 }
 
-function ensureCommandSession(sessionId: string, ctx: SessionCommandContext) {
-  if (getSession(sessionId)) return
+function ensureCommandSession(sessionId: string, ctx: SessionCommandContext): boolean {
+  if (getSession(sessionId)) return false
   createSession({
     id: sessionId,
     profile: ctx.profile,
@@ -403,6 +406,7 @@ function ensureCommandSession(sessionId: string, ctx: SessionCommandContext) {
     model: ctx.model,
     title: 'Bridge command',
   })
+  return true
 }
 
 function persistCommandMessage(sessionId: string, state: SessionState, content: string) {

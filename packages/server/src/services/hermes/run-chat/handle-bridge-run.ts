@@ -31,7 +31,7 @@ import type { ContentBlock, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta } from './bridge-delta'
-import { emitSessionStatus } from './status-feed'
+import { emitSessionListChanged, emitSessionStatus } from './status-feed'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
@@ -177,6 +177,7 @@ export async function handleBridgeRun(
     const previewText = extractTextForPreview(input)
     const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
     createSession({ id: session_id, profile, source: 'cli', model: resolvedModel, provider: resolvedProvider, title: preview })
+    emitSessionListChanged(nsp, profile, 'created', session_id)
   }
   const messageId = addMessage({
     session_id,
