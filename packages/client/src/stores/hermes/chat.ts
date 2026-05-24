@@ -1463,6 +1463,7 @@ export const useChatStore = defineStore('chat', () => {
             case 'thinking.delta': {
               const text = evt.text || evt.delta || ''
               if (!text) break
+              noteAgentActivity(sid)
               runProducedAssistantText = true
               const msgs = getSessionMsgs(sid)
               const last = activeAssistantMessageId
@@ -1506,7 +1507,10 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'message.delta': {
-              if (evt.delta) runProducedAssistantText = true
+              if (evt.delta) {
+                runProducedAssistantText = true
+                noteAgentActivity(sid)
+              }
               const msgs = getSessionMsgs(sid)
               const last = activeAssistantMessageId
                 ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -1537,6 +1541,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'tool.started': {
               runHadToolActivity = true
+              noteAgentActivity(sid)
               const msgs = getSessionMsgs(sid)
               const toolCallId = (evt as any).tool_call_id as string | undefined
               const last = activeAssistantMessageId
@@ -1575,6 +1580,7 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'tool.completed': {
               runHadToolActivity = true
+              noteAgentActivity(sid)
               const msgs = getSessionMsgs(sid)
               const toolCallId = (evt as any).tool_call_id as string | undefined
               const toolMsgs = toolCallId
@@ -1601,6 +1607,7 @@ export const useChatStore = defineStore('chat', () => {
             case 'subagent.complete': {
               runHadToolActivity = true
               handleSubagentEvent(sid, evt)
+              noteAgentActivity(sid)
               break
             }
 
@@ -1705,6 +1712,10 @@ export const useChatStore = defineStore('chat', () => {
                 playCompletionBellIfEnabled()
               }
 
+              if (runProducedAssistantText || finalOutputTrimmed !== '' || swallowedError) {
+                noteAgentActivity(sid)
+              }
+
               // 自动播放语音
               if (autoPlaySpeechEnabled.value) {
                 const msgs = getSessionMsgs(sid)
@@ -1737,6 +1748,7 @@ export const useChatStore = defineStore('chat', () => {
                 }
               }
               addAgentErrorMessage(sid, evt.error)
+              noteAgentActivity(sid)
               const msgs = getSessionMsgs(sid)
               msgs.forEach((m, i) => {
                 if (m.role === 'tool' && m.toolStatus === 'running') {
@@ -1776,6 +1788,7 @@ export const useChatStore = defineStore('chat', () => {
         (err) => {
           console.warn('Socket.IO run stream error:', err.message)
           addAgentErrorMessage(sid, err.message)
+          noteAgentActivity(sid)
           const msgs = getSessionMsgs(sid)
           msgs.forEach((m, i) => {
             if (m.role === 'tool' && m.toolStatus === 'running') {
@@ -1933,6 +1946,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'thinking.delta': {
           const text = evt.text || evt.delta || ''
           if (!text) break
+          noteAgentActivity(sid)
           runProducedAssistantText = true
           const msgs = getSessionMsgs(sid)
           const last = activeAssistantMessageId
@@ -1969,7 +1983,10 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'message.delta': {
-          if (evt.delta) runProducedAssistantText = true
+          if (evt.delta) {
+            runProducedAssistantText = true
+            noteAgentActivity(sid)
+          }
           const msgs = getSessionMsgs(sid)
           const last = activeAssistantMessageId
             ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -1999,6 +2016,7 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'tool.started': {
           runHadToolActivity = true
+          noteAgentActivity(sid)
           const msgs = getSessionMsgs(sid)
           const toolCallId = (evt as any).tool_call_id as string | undefined
           const last = activeAssistantMessageId
@@ -2037,6 +2055,7 @@ export const useChatStore = defineStore('chat', () => {
 
         case 'tool.completed': {
           runHadToolActivity = true
+          noteAgentActivity(sid)
           const msgs = getSessionMsgs(sid)
           const toolCallId = (evt as any).tool_call_id as string | undefined
           const toolMsgs = toolCallId
@@ -2061,6 +2080,7 @@ export const useChatStore = defineStore('chat', () => {
         case 'subagent.complete': {
           runHadToolActivity = true
           handleSubagentEvent(sid, evt)
+          noteAgentActivity(sid)
           break
         }
 
@@ -2151,6 +2171,10 @@ export const useChatStore = defineStore('chat', () => {
             playCompletionBellIfEnabled()
           }
 
+          if (runProducedAssistantText || finalOutputTrimmed !== '' || swallowedError) {
+            noteAgentActivity(sid)
+          }
+
           // Auto-play speech for every completed assistant message
           if (autoPlaySpeechEnabled.value) {
             const msgs = getSessionMsgs(sid)
@@ -2189,6 +2213,7 @@ export const useChatStore = defineStore('chat', () => {
             queueLengths.value.delete(sid)
           }
           addAgentErrorMessage(sid, evt.error)
+          noteAgentActivity(sid)
           const msgs = getSessionMsgs(sid)
           msgs.forEach((m, i) => {
             if (m.role === 'tool' && m.toolStatus === 'running') {
