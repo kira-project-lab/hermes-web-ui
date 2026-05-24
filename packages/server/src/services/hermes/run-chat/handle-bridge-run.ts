@@ -31,6 +31,7 @@ import type { ContentBlock, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta } from './bridge-delta'
+import { emitSessionStatus } from './status-feed'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
@@ -160,6 +161,7 @@ export async function handleBridgeRun(
   state.bridgeToolCounter = 0
   state.bridgePendingTools = []
   state.responseRun = undefined
+  emitSessionStatus(nsp, session_id, state, profile)
 
   const inputStr = contentBlocksToString(input)
   state.messages.push({
@@ -558,6 +560,15 @@ async function applyBridgeChunkAsync(
         timeout_ms: ev.timeout_ms,
       }
       replaceState(sessionMap, sessionId, 'approval.requested', payload)
+      state.pendingApproval = {
+        approval_id: String(ev.approval_id || ''),
+        command: String(ev.command || ''),
+        description: String(ev.description || ''),
+        choices: Array.isArray(ev.choices) ? ev.choices.map(String) : [],
+        allow_permanent: Boolean(ev.allow_permanent),
+        requested_at: Date.now(),
+      }
+      emitSessionStatus(nsp, sessionId, state, profile)
       emit('approval.requested', payload)
     } else if (evType === 'approval.resolved') {
       const payload = {
@@ -567,6 +578,8 @@ async function applyBridgeChunkAsync(
         choice: ev.choice,
       }
       replaceState(sessionMap, sessionId, 'approval.resolved', payload)
+      state.pendingApproval = null
+      emitSessionStatus(nsp, sessionId, state, profile)
       emit('approval.resolved', payload)
     } else if (evType === 'bridge.compression.requested') {
       const bridgeHistory = await buildDbHistory(sessionId, { excludeLastUser: true })
@@ -746,7 +759,9 @@ async function applyBridgeChunkAsync(
   }
   state.runId = undefined
   state.activeRunMarker = undefined
+  state.pendingApproval = null
   state.events = []
+  emitSessionStatus(nsp, sessionId, state, profile)
   const terminalError = bridgeTerminalError(chunk)
   const eventName = terminalError ? 'run.failed' : 'run.completed'
   const payload = {

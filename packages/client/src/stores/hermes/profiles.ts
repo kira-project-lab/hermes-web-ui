@@ -3,8 +3,10 @@ import { ref } from 'vue'
 import * as profilesApi from '@/api/hermes/profiles'
 import type { HermesProfile, HermesProfileDetail } from '@/api/hermes/profiles'
 import { useAppStore } from './app'
+import { createBrowserSync, type BrowserSyncEvent } from '@/utils/browser-sync'
 
 const ACTIVE_PROFILE_STORAGE_KEY = 'hermes_active_profile_name'
+const browserSync = createBrowserSync<BrowserSyncEvent>('hermes-ui')
 
 export const useProfilesStore = defineStore('profiles', () => {
   const profiles = ref<HermesProfile[]>([])
@@ -140,6 +142,7 @@ export const useProfilesStore = defineStore('profiles', () => {
         }))
         activeProfile.value = profiles.value.find(profile => profile.name === name) ?? null
         await useAppStore().reloadModels()
+        publishActiveProfileChanged(name)
       }
       return ok
     } finally {
@@ -157,6 +160,31 @@ export const useProfilesStore = defineStore('profiles', () => {
       switching.value = false
     }
   }
+
+  function publishActiveProfileChanged(name: string) {
+    browserSync.publish({ type: 'active-profile.changed', profile: name, sourceId: browserSync.sourceId })
+  }
+
+  async function applyExternalActiveProfile(name: string) {
+    activeProfileName.value = name
+    localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, name)
+    if (profiles.value.length === 0) {
+      await fetchProfiles()
+      return
+    }
+    profiles.value = profiles.value.map(profile => ({
+      ...profile,
+      active: profile.name === name,
+    }))
+    activeProfile.value = profiles.value.find(profile => profile.name === name) ?? null
+    await useAppStore().reloadModels()
+  }
+
+  browserSync.subscribe(event => {
+    if (event.sourceId === browserSync.sourceId) return
+    if (event.type !== 'active-profile.changed') return
+    void applyExternalActiveProfile(event.profile)
+  })
 
   async function exportProfile(name: string) {
     return profilesApi.exportProfile(name)
@@ -183,6 +211,7 @@ export const useProfilesStore = defineStore('profiles', () => {
     renameProfile,
     switchProfile,
     switchHermesProfile,
+    applyExternalActiveProfile,
     exportProfile,
     importProfile,
     updateAvatar,
