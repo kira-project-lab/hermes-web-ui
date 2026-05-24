@@ -316,6 +316,17 @@ describe('chat store session attention state', () => {
     expect(Object.keys(statusMock.handlersByProfile).sort()).toEqual(['personal', 'research'])
   })
 
+  it('subscribes to an empty filtered profile so future sessions can invalidate it', async () => {
+    sessionsApiMock.fetchSessions.mockResolvedValue([])
+    const store = useChatStore()
+    store.sessionProfileFilter = 'personal'
+
+    await store.loadSessions('personal', null, { preserveActive: true, switchIfMissing: false })
+
+    expect(statusMock.handlersByProfile.research).toBeTruthy()
+    expect(statusMock.handlersByProfile.personal).toBeTruthy()
+  })
+
   it('refreshes sessions without changing active session on list invalidation', async () => {
     vi.useFakeTimers()
     try {
@@ -377,6 +388,31 @@ describe('chat store session attention state', () => {
         'session-research',
       ])
       expect(store.activeSessionId).toBe('session-research')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears active session when another tab deletes it', async () => {
+    vi.useFakeTimers()
+    try {
+      const store = useChatStore()
+      store.sessions = [makeSession('session-read-1')]
+      store.activeSessionId = 'session-read-1'
+      store.activeSession = makeSession('session-read-1')
+      store.startSessionStatusSync('research')
+      sessionsApiMock.fetchSessions.mockResolvedValueOnce([])
+
+      statusMock.handlersByProfile.research?.onSessionListChanged?.({
+        profile: 'research',
+        reason: 'deleted',
+        session_id: 'session-read-1',
+        updatedAt: Date.now(),
+      })
+      await vi.advanceTimersByTimeAsync(151)
+
+      expect(store.activeSessionId).toBeNull()
+      expect(store.activeSession).toBeNull()
     } finally {
       vi.useRealTimers()
     }
