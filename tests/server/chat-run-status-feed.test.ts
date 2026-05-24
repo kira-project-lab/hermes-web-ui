@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { emitSessionStatus, sessionRuntimeStatus, sessionRuntimeStatusSnapshot, sessionStatusRoom } from '../../packages/server/src/services/hermes/run-chat/status-feed'
+import { emitSessionListChanged, emitSessionStatus, sessionRuntimeStatus, sessionRuntimeStatusSnapshot, sessionStatusRoom } from '../../packages/server/src/services/hermes/run-chat/status-feed'
 import type { SessionState } from '../../packages/server/src/services/hermes/run-chat/types'
 
 function state(overrides: Partial<SessionState> = {}): SessionState {
@@ -74,5 +74,21 @@ describe('chat run status feed helpers', () => {
       isWorking: true,
     }))
     expect(sessionState.lastStatusUpdatedAt).toEqual(expect.any(Number))
+  })
+
+  it('emits session list changed to the profile status room', () => {
+    const emit = vi.fn()
+    const to = vi.fn(() => ({ emit }))
+    const nsp = { to } as any
+
+    emitSessionListChanged(nsp, 'research', 'created', 'session-1')
+
+    expect(to).toHaveBeenCalledWith('profile:research:session-status')
+    expect(emit).toHaveBeenCalledWith('session.list.changed', {
+      profile: 'research',
+      reason: 'created',
+      session_id: 'session-1',
+      updatedAt: expect.any(Number),
+    })
   })
 })

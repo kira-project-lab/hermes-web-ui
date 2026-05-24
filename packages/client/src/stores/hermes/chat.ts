@@ -375,6 +375,11 @@ function removeItem(key: string) {
 // Strip the circular `file: File` reference from attachments before caching —
 // File objects don't serialize and we only need name/type/size/url for display.
 
+interface LoadSessionsOptions {
+  preserveActive?: boolean
+  switchIfMissing?: boolean
+}
+
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
@@ -388,8 +393,9 @@ export const useChatStore = defineStore('chat', () => {
   /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
   const pendingApprovals = ref<Map<string, PendingApproval>>(new Map())
-  const runtimeStatuses = ref<Map<string, SessionRuntimeStatus>>(new Map())
-  const stopStatusSync = ref<(() => void) | null>(null)
+  const runtimeStatusesByProfile = ref<Map<string, Map<string, SessionRuntimeStatus>>>(new Map())
+  const statusSubscriptions = new Map<string, () => void>()
+  const sessionListRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const unreadSessionIds = ref<Set<string>>(new Set())
   const sessionSeenAt = ref<Record<string, number>>({})
   const activePendingApproval = computed(() => {
@@ -448,8 +454,25 @@ export const useChatStore = defineStore('chat', () => {
   const activeSession = ref<Session | null>(null)
   const messages = computed<Message[]>(() => activeSession.value?.messages || [])
 
+  function normalizeProfileName(profile?: string | null): string {
+    return profile?.trim() || 'default'
+  }
+
+  function isActiveRuntimeStatus(status: SessionRuntimeStatus): boolean {
+    return Boolean(status.isWorking || status.isAborting || (status.queueLength ?? 0) > 0 || status.pendingApproval)
+  }
+
+  function profileForSession(sessionId: string): string {
+    return normalizeProfileName(sessions.value.find(session => session.id === sessionId)?.profile || getProfileName())
+  }
+
+  function runtimeStatusForSession(sessionId: string): SessionRuntimeStatus | null {
+    const profile = profileForSession(sessionId)
+    return runtimeStatusesByProfile.value.get(profile)?.get(sessionId) || null
+  }
+
   function isSessionLive(sessionId: string): boolean {
-    return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId) || runtimeStatuses.value.get(sessionId)?.isWorking === true
+    return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId) || runtimeStatusForSession(sessionId)?.isWorking === true
   }
 
   function publishSessionAttentionChanged(): void {
@@ -506,7 +529,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function runtimePendingApproval(sessionId: string): PendingApproval | null {
-    const pending = runtimeStatuses.value.get(sessionId)?.pendingApproval
+    const pending = runtimeStatusForSession(sessionId)?.pendingApproval
     if (!pending) return null
     const choices = Array.isArray(pending.choices)
       ? pending.choices.filter((choice): choice is PendingApproval['choices'][number] =>
@@ -524,7 +547,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function hasPendingApproval(sessionId: string): boolean {
-    return pendingApprovals.value.has(sessionId) || Boolean(runtimeStatuses.value.get(sessionId)?.pendingApproval)
+    return pendingApprovals.value.has(sessionId) || Boolean(runtimeStatusForSession(sessionId)?.pendingApproval)
   }
 
   function sessionAttentionState(sessionId: string): SessionAttentionState {
@@ -567,36 +590,95 @@ export const useChatStore = defineStore('chat', () => {
     () => useProfilesStore().activeProfileName,
     () => {
       loadSessionAttentionState()
-      runtimeStatuses.value = new Map()
+      syncSessionStatusSubscriptions()
     },
   )
 
+  function removeRuntimeStatusesForProfile(profile: string): void {
+    const normalized = normalizeProfileName(profile)
+    if (!runtimeStatusesByProfile.value.has(normalized)) return
+    const next = new Map(runtimeStatusesByProfile.value)
+    next.delete(normalized)
+    runtimeStatusesByProfile.value = next
+  }
+
   function applyRuntimeStatus(status: SessionRuntimeStatus): void {
-    if (!status.session_id || status.profile !== getProfileName()) return
-    const next = new Map(runtimeStatuses.value)
-    const active = status.isWorking || status.isAborting || (status.queueLength ?? 0) > 0 || Boolean(status.pendingApproval)
-    if (active) next.set(status.session_id, status)
-    else next.delete(status.session_id)
-    runtimeStatuses.value = next
+    if (!status.session_id) return
+    const profile = normalizeProfileName(status.profile)
+    const next = new Map(runtimeStatusesByProfile.value)
+    const profileMap = new Map(next.get(profile) || [])
+    if (isActiveRuntimeStatus(status)) profileMap.set(status.session_id, { ...status, profile })
+    else profileMap.delete(status.session_id)
+    if (profileMap.size) next.set(profile, profileMap)
+    else next.delete(profile)
+    runtimeStatusesByProfile.value = next
   }
 
   function applyRuntimeSnapshot(payload: { profile: string; sessions: SessionRuntimeStatus[] }): void {
-    if (payload.profile !== getProfileName()) return
-    runtimeStatuses.value = new Map(payload.sessions.map(status => [status.session_id, status]))
+    const profile = normalizeProfileName(payload.profile)
+    const next = new Map(runtimeStatusesByProfile.value)
+    const profileMap = new Map<string, SessionRuntimeStatus>()
+    for (const status of payload.sessions || []) {
+      if (!status.session_id) continue
+      const normalizedStatus = { ...status, profile: normalizeProfileName(status.profile || profile) }
+      if (isActiveRuntimeStatus(normalizedStatus)) profileMap.set(status.session_id, normalizedStatus)
+    }
+    if (profileMap.size) next.set(profile, profileMap)
+    else next.delete(profile)
+    runtimeStatusesByProfile.value = next
+  }
+
+  function profilesNeedingStatusSync(): string[] {
+    const profiles = new Set<string>()
+    profiles.add(normalizeProfileName(getProfileName()))
+    for (const session of sessions.value) {
+      profiles.add(normalizeProfileName(session.profile || getProfileName()))
+    }
+    return [...profiles]
+  }
+
+  function scheduleSessionListRefresh(profile: string): void {
+    const normalizedProfile = normalizeProfileName(profile || getProfileName())
+    const existing = sessionListRefreshTimers.get(normalizedProfile)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      sessionListRefreshTimers.delete(normalizedProfile)
+      void loadSessions(normalizedProfile, null, { preserveActive: true, switchIfMissing: false })
+    }, 150)
+    sessionListRefreshTimers.set(normalizedProfile, timer)
+  }
+
+  function syncSessionStatusSubscriptions(profiles = profilesNeedingStatusSync()): void {
+    const desired = new Set(profiles.map(profile => normalizeProfileName(profile)))
+    for (const profile of desired) {
+      if (statusSubscriptions.has(profile)) continue
+      const stop = subscribeSessionStatus(profile, {
+        onSnapshot: applyRuntimeSnapshot,
+        onUpdate: applyRuntimeStatus,
+        onSessionListChanged: payload => {
+          if (payload.profile) scheduleSessionListRefresh(payload.profile)
+        },
+      })
+      statusSubscriptions.set(profile, stop)
+    }
+    for (const [profile, stop] of [...statusSubscriptions]) {
+      if (desired.has(profile)) continue
+      stop()
+      statusSubscriptions.delete(profile)
+      removeRuntimeStatusesForProfile(profile)
+    }
+  }
+
+  function stopAllSessionStatusSync(): void {
+    for (const stop of statusSubscriptions.values()) stop()
+    statusSubscriptions.clear()
+    for (const timer of sessionListRefreshTimers.values()) clearTimeout(timer)
+    sessionListRefreshTimers.clear()
   }
 
   function startSessionStatusSync(profile = getProfileName()): () => void {
-    stopStatusSync.value?.()
-    runtimeStatuses.value = new Map()
-    stopStatusSync.value = subscribeSessionStatus(profile, {
-      onSnapshot: applyRuntimeSnapshot,
-      onUpdate: applyRuntimeStatus,
-    })
-    return () => {
-      stopStatusSync.value?.()
-      stopStatusSync.value = null
-      runtimeStatuses.value = new Map()
-    }
+    syncSessionStatusSubscriptions([normalizeProfileName(profile), ...profilesNeedingStatusSync()])
+    return stopAllSessionStatusSync
   }
 
   function clearActiveSession() {
@@ -608,7 +690,7 @@ export const useChatStore = defineStore('chat', () => {
     removeItem(storageKey())
   }
 
-  async function loadSessions(profile?: string | null, preferredSessionId?: string | null) {
+  async function loadSessions(profile?: string | null, preferredSessionId?: string | null, options: LoadSessionsOptions = {}) {
     isLoadingSessions.value = true
     try {
       const list = await fetchSessions(undefined, undefined, profile || undefined)
@@ -621,24 +703,31 @@ export const useChatStore = defineStore('chat', () => {
         if (prev && prev.length) s.messages = prev
       }
       sessions.value = fresh
+      syncSessionStatusSubscriptions()
 
-      // Restore route-selected session first (tab-local source of truth),
-      // then current in-memory session, then persisted legacy/default choice,
-      // then fallback to the most recent session.
-      const currentId = activeSessionId.value
-      const legacyActiveKey = legacyStorageKey()
-      const storedId = getItemBestEffort(storageKey()) || (legacyActiveKey ? getItemBestEffort(LEGACY_STORAGE_KEY) : null)
-      const targetId = preferredSessionId && sessions.value.some(s => s.id === preferredSessionId)
-        ? preferredSessionId
-        : currentId && sessions.value.some(s => s.id === currentId)
-          ? currentId
-          : storedId && sessions.value.some(s => s.id === storedId)
-            ? storedId
-            : sessions.value[0]?.id
-      if (targetId) {
-        await switchSession(targetId)
-      } else {
-        clearActiveSession()
+      if (!options.preserveActive) {
+        // Restore route-selected session first (tab-local source of truth),
+        // then current in-memory session, then persisted legacy/default choice,
+        // then fallback to the most recent session.
+        const currentId = activeSessionId.value
+        const legacyActiveKey = legacyStorageKey()
+        const storedId = getItemBestEffort(storageKey()) || (legacyActiveKey ? getItemBestEffort(LEGACY_STORAGE_KEY) : null)
+        const targetId = preferredSessionId && sessions.value.some(s => s.id === preferredSessionId)
+          ? preferredSessionId
+          : currentId && sessions.value.some(s => s.id === currentId)
+            ? currentId
+            : storedId && sessions.value.some(s => s.id === storedId)
+              ? storedId
+              : sessions.value[0]?.id
+        if (targetId) {
+          await switchSession(targetId)
+        } else if (options.switchIfMissing !== false) {
+          clearActiveSession()
+        }
+      } else if (options.switchIfMissing !== false && activeSessionId.value && !sessions.value.some(s => s.id === activeSessionId.value)) {
+        const targetId = sessions.value[0]?.id
+        if (targetId) await switchSession(targetId)
+        else clearActiveSession()
       }
     } catch (err) {
       console.error('Failed to load sessions:', err)
@@ -1272,7 +1361,7 @@ export const useChatStore = defineStore('chat', () => {
     respondToolApproval(pending.sessionId, pending.approvalId, choice)
     pendingApprovals.value.delete(pending.sessionId)
     pendingApprovals.value = new Map(pendingApprovals.value)
-    const runtime = runtimeStatuses.value.get(pending.sessionId)
+    const runtime = runtimeStatusForSession(pending.sessionId)
     if (runtime?.pendingApproval) {
       applyRuntimeStatus({ ...runtime, pendingApproval: null })
     }
@@ -2528,6 +2617,7 @@ export const useChatStore = defineStore('chat', () => {
     loadSessionAttentionState,
     persistSessionAttentionState,
     startSessionStatusSync,
+    stopAllSessionStatusSync,
     _setSessionLiveForTest,
     sessionProfileFilter,
     compressionState,
@@ -2546,6 +2636,7 @@ export const useChatStore = defineStore('chat', () => {
     newChat,
     newCliSession,
     switchSession,
+    clearActiveSession,
     switchSessionModel,
     addOrUpdateSession,
     clearProviderFromSessions,

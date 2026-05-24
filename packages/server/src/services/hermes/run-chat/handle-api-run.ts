@@ -24,7 +24,7 @@ import { handleMessage } from './message-format'
 import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 import type { ContentBlock, SessionState, ChatRunSource } from './types'
-import { emitSessionStatus } from './status-feed'
+import { emitSessionListChanged, emitSessionStatus } from './status-feed'
 
 export function resolveRunSource(_source?: string, _sessionId?: string): ChatRunSource {
   return 'cli'
@@ -127,6 +127,7 @@ export async function handleApiRun(
         const previewText = extractTextForPreview(input)
         const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
         createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
+        emitSessionListChanged(nsp, profile, 'created', session_id)
       }
 
       const messageId = addMessage({
@@ -150,6 +151,7 @@ export async function handleApiRun(
         const previewText = extractTextForPreview(input)
         const preview = previewText.replace(/[\r\n]/g, ' ').substring(0, 100)
         createSession({ id: session_id, profile, source: 'api_server', model, provider, title: preview })
+        emitSessionListChanged(nsp, profile, 'created', session_id)
       }
       const messageId = addMessage({
         session_id,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
@@ -12,7 +12,6 @@ const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
 const settingsStore = useSettingsStore()
 const route = useRoute()
-const router = useRouter()
 let stopStatusSync: (() => void) | null = null
 
 const routeSessionId = computed(() => {
@@ -26,9 +25,21 @@ const routeProfile = computed(() => {
 })
 
 async function loadRouteSession() {
-  await chatStore.loadSessions(chatStore.sessionProfileFilter, routeSessionId.value)
-  if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
-    await router.replace({ name: 'hermes.chat' })
+  const profile = routeProfile.value || chatStore.sessionProfileFilter
+  await chatStore.loadSessions(profile, null, { preserveActive: true, switchIfMissing: false })
+
+  if (!routeSessionId.value) {
+    await chatStore.loadSessions(profile)
+    return
+  }
+
+  if (!chatStore.sessions.some(session => session.id === routeSessionId.value)) {
+    chatStore.clearActiveSession()
+    return
+  }
+
+  if (chatStore.activeSessionId !== routeSessionId.value) {
+    await chatStore.switchSession(routeSessionId.value)
   }
 }
 
