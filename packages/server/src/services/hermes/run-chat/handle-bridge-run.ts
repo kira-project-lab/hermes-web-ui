@@ -311,13 +311,16 @@ export async function handleBridgeRun(
     if (state.activeRunMarker !== runMarker) return
     if (!state.isWorking) return
     const queueLen = state.queue?.length ?? 0
+    const statusProfile = state.profile || profile
     state.isWorking = false
     state.isAborting = false
     state.profile = undefined
     state.runId = undefined
     state.activeRunMarker = undefined
+    state.pendingApproval = null
     state.events = []
     state.bridgePendingToolCallMarkup = undefined
+    emitSessionStatus(nsp, session_id, state, statusProfile)
     flushBridgePendingToDb(state, session_id)
     updateSessionStats(session_id)
     const message = err instanceof Error ? err.message : String(err)

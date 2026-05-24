@@ -44,6 +44,8 @@ describe('chat run status feed helpers', () => {
     })
     expect(JSON.stringify(status)).not.toContain('secret content')
     expect(JSON.stringify(status)).not.toContain('secret queued input')
+    expect(JSON.stringify(status)).not.toContain('touch file')
+    expect(JSON.stringify(status)).not.toContain('Need permission')
   })
 
   it('snapshots only active statuses for the requested profile', () => {
