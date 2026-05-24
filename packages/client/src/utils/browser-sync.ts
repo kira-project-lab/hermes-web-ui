@@ -37,6 +37,7 @@ export function createBrowserSync<T extends { sourceId: string }>(name: string):
   const storageKey = `hermes.browserSync.${name}`
   let channel: BroadcastChannel | null = null
   let closed = false
+  let sequence = 0
 
   const notify = (event: T) => {
     if (closed) return
@@ -76,7 +77,7 @@ export function createBrowserSync<T extends { sourceId: string }>(name: string):
       try { channel?.postMessage(event) } catch { /* ignore */ }
       try {
         if (typeof localStorage !== 'undefined') {
-          localStorage.setItem(storageKey, JSON.stringify({ event, at: Date.now() }))
+          localStorage.setItem(storageKey, JSON.stringify({ event, at: Date.now(), seq: ++sequence }))
         }
       } catch {
         // private mode/quota unavailable; BroadcastChannel/same-document still works

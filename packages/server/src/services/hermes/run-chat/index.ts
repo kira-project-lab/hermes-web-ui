@@ -115,6 +115,15 @@ export class ChatRunSocket {
       }
     })
 
+    socket.on('unsubscribe_status', (data: { profile?: string }) => {
+      try {
+        const profile = resolveRunProfile(undefined, data.profile)
+        socket.leave(sessionStatusRoom(profile))
+      } catch {
+        // ignore invalid unsubscribe requests
+      }
+    })
+
     socket.on('run', async (data: {
       input: string | ContentBlock[]
       session_id?: string

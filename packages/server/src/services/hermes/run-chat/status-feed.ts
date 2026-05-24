@@ -13,7 +13,16 @@ export function sessionRuntimeStatus(sessionId: string, state: SessionState) {
     isWorking: Boolean(state.isWorking),
     isAborting: Boolean(state.isAborting),
     queueLength: state.queue?.length || 0,
-    pendingApproval: state.pendingApproval || null,
+    pendingApproval: state.pendingApproval
+      ? {
+          approval_id: state.pendingApproval.approval_id,
+          command: '',
+          description: '',
+          choices: state.pendingApproval.choices,
+          allow_permanent: state.pendingApproval.allow_permanent,
+          requested_at: state.pendingApproval.requested_at,
+        }
+      : null,
     updatedAt: state.lastStatusUpdatedAt || Date.now(),
   }
 }

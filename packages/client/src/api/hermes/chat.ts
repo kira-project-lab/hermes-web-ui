@@ -103,6 +103,7 @@ export interface RunEvent {
 let chatRunSocket: Socket | null = null
 let globalListenersRegistered = false
 let chatRunSocketProfile: string | null = null
+const statusSockets = new Map<string, Socket>()
 
 /**
  * Session event handlers map
@@ -511,16 +512,45 @@ export function subscribeSessionStatus(
     onUpdate: (status: SessionRuntimeStatus) => void
   },
 ): () => void {
-  const socket = connectChatRun(profile)
+  const socket = connectChatStatus(profile)
   const onSnapshot = (payload: SessionStatusSnapshotPayload) => handlers.onSnapshot(payload)
   const onUpdate = (status: SessionRuntimeStatus) => handlers.onUpdate(status)
+  const subscribe = () => socket.emit('subscribe_status', { profile })
   socket.on('session.status.snapshot', onSnapshot)
   socket.on('session.status.updated', onUpdate)
-  socket.emit('subscribe_status', { profile })
+  socket.on('connect', subscribe)
+  subscribe()
   return () => {
+    socket.emit('unsubscribe_status', { profile })
+    removeSocketListener(socket, 'connect', subscribe)
     removeSocketListener(socket, 'session.status.snapshot', onSnapshot)
     removeSocketListener(socket, 'session.status.updated', onUpdate)
   }
+}
+
+function connectChatStatus(profile: string): Socket {
+  const normalizedProfile = profile?.trim() || 'default'
+  const existing = statusSockets.get(normalizedProfile)
+  if (existing?.connected) return existing
+
+  const baseUrl = getBaseUrlValue()
+  const token = getApiKey()
+  const socket = io(`${baseUrl}/chat-run`, {
+    auth: { token },
+    query: { profile: normalizedProfile },
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 30000,
+    randomizationFactor: 0.5,
+    timeout: 30000,
+  })
+  statusSockets.set(normalizedProfile, socket)
+  socket.on('disconnect', (reason: string) => {
+    if (reason === 'io client disconnect') statusSockets.delete(normalizedProfile)
+  })
+  return socket
 }
 
 export function connectChatRun(requestedProfile?: string | null): Socket {
@@ -617,6 +647,10 @@ export function disconnectChatRun(): void {
     globalListenersRegistered = false
     sessionEventHandlers.clear()
   }
+  for (const socket of statusSockets.values()) {
+    socket.disconnect()
+  }
+  statusSockets.clear()
 }
 
 function removeSocketListener(socket: Socket, event: string, handler: (...args: any[]) => void): void {

@@ -574,7 +574,9 @@ export const useChatStore = defineStore('chat', () => {
   function applyRuntimeStatus(status: SessionRuntimeStatus): void {
     if (!status.session_id || status.profile !== getProfileName()) return
     const next = new Map(runtimeStatuses.value)
-    next.set(status.session_id, status)
+    const active = status.isWorking || status.isAborting || (status.queueLength ?? 0) > 0 || Boolean(status.pendingApproval)
+    if (active) next.set(status.session_id, status)
+    else next.delete(status.session_id)
     runtimeStatuses.value = next
   }
 
@@ -1270,6 +1272,10 @@ export const useChatStore = defineStore('chat', () => {
     respondToolApproval(pending.sessionId, pending.approvalId, choice)
     pendingApprovals.value.delete(pending.sessionId)
     pendingApprovals.value = new Map(pendingApprovals.value)
+    const runtime = runtimeStatuses.value.get(pending.sessionId)
+    if (runtime?.pendingApproval) {
+      applyRuntimeStatus({ ...runtime, pendingApproval: null })
+    }
   }
 
   function showNextQueuedUserMessage(sessionId: string) {
