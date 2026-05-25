@@ -21,7 +21,7 @@ const router = useRouter();
 const appStore = useAppStore();
 const { openSessionSearch } = useSessionSearch();
 const selectedKey = computed(() => {
-  if (route.name === "hermes.session") return "hermes.chat";
+  if (route.name === "hermes.session" || route.name === "hermes.sessionNew") return "hermes.chat";
   if (route.name === "hermes.historySession") return "hermes.history";
   if (route.name === "hermes.groupChatRoom") return "hermes.groupChat";
   return route.name as string;
@@ -79,7 +79,7 @@ function openChangelog() {
 
 <template>
   <aside class="sidebar" :class="{ open: appStore.sidebarOpen, collapsed: appStore.sidebarCollapsed }">
-    <RouteLinkItem class="sidebar-logo" :to="{ name: 'hermes.chat' }">
+    <RouteLinkItem class="sidebar-logo" :to="{ name: 'hermes.sessionNew' }">
       <img :src="logoPath" alt="Hermes" class="logo-img" />
       <span class="logo-text">Hermes</span>
       <!-- <video class="logo-dance" :src="isDark ? danceVideoDark : danceVideoLight" autoplay loop muted playsinline /> -->
@@ -102,7 +102,7 @@ function openChangelog() {
           </svg>
         </div>
         <div v-show="!isGroupCollapsed('conversation')" class="nav-group-items">
-          <RouteLinkItem class="nav-item" :to="{ name: 'hermes.chat' }" :active="isNavActive('hermes.chat', 'hermes.session')">
+          <RouteLinkItem class="nav-item" :to="{ name: 'hermes.sessionNew' }" :active="isNavActive('hermes.chat', 'hermes.session', 'hermes.sessionNew')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>

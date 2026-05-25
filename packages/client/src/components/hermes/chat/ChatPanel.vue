@@ -277,8 +277,7 @@ async function confirmNewChat() {
     model: newChatModel.value,
   });
   await router.push({
-    name: "hermes.session",
-    params: { sessionId: session.id },
+    name: "hermes.sessionNew",
   });
   showNewChatModal.value = false;
 }

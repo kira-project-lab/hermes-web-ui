@@ -32,6 +32,7 @@ vi.mock('vue-router', () => ({
     currentRoute: routerCurrentRoute,
     push: apiMocks.routerPushMock,
   }),
+  useRoute: () => ({ query: {} }),
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -181,7 +182,7 @@ describe('session search modal', () => {
 
     expect(chatStoreMock.loadSessions).toHaveBeenCalled()
     expect(chatStoreMock.switchSession).toHaveBeenCalledWith('match-1', '17')
-    expect(apiMocks.routerPushMock).toHaveBeenCalledWith({ name: 'hermes.chat' })
+    expect(apiMocks.routerPushMock).toHaveBeenCalledWith({ name: 'hermes.session', params: { sessionId: 'match-1' }, query: {} })
   })
 })
 
@@ -201,11 +202,30 @@ describe('keyboard shortcut', () => {
       },
     })
 
-    mount(Dummy)
+    const wrapper = mount(Dummy)
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))
     await nextTick()
 
     expect(useSessionSearch().sessionSearchOpen.value).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('creates a new session and navigates to the session-first route on Cmd/Ctrl+N', async () => {
+    const Dummy = defineComponent({
+      setup() {
+        useKeyboard()
+        return () => h('div')
+      },
+    })
+
+    const wrapper = mount(Dummy)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true }))
+    await nextTick()
+
+    expect(chatStoreMock.newChat).toHaveBeenCalledTimes(1)
+    expect(apiMocks.routerPushMock).toHaveBeenCalledWith({ name: 'hermes.sessionNew' })
+    wrapper.unmount()
   })
 })
