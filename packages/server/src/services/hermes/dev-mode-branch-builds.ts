@@ -45,7 +45,22 @@ export interface BranchBuildSummary {
   logTail: string[]
 }
 
-const DEFAULT_REVIEW_BASE = 'fork-review/review-base'
+export type BranchPreviewCapabilityReason =
+  | 'disabled'
+  | 'repo_path_missing'
+  | 'not_git_repo'
+
+export interface BranchPreviewCapabilities {
+  isSuperAdmin: boolean
+  devModeAvailable: boolean
+  branchPreviewAvailable: boolean
+  branchPreviewConfigured: boolean
+  canListBranches: boolean
+  canBuild: boolean
+  reason: BranchPreviewCapabilityReason | null
+}
+
+const DEFAULT_REVIEW_BASE = 'main'
 const MAX_LOG_LINES = 800
 const BUILD_STATE_FILE = '.dev-mode-branch-builds.json'
 const BUILD_WORKTREE_DIR = '.dev-mode-branch-builds'
@@ -210,7 +225,40 @@ async function resolveBranchRef(branch: string): Promise<string> {
   return candidate
 }
 
+export async function getBranchPreviewCapabilities(profile: string, isSuperAdmin: boolean): Promise<BranchPreviewCapabilities> {
+  const enabled = await isDevModeEnabled(profile)
+  if (!isSuperAdmin) {
+    return {
+      isSuperAdmin: false,
+      devModeAvailable: false,
+      branchPreviewAvailable: false,
+      branchPreviewConfigured: false,
+      canListBranches: false,
+      canBuild: false,
+      reason: 'disabled',
+    }
+  }
+
+  const repoCheck = await gitCommand(['rev-parse', '--is-inside-work-tree'])
+  const isGitRepo = repoCheck.code === 0 && repoCheck.stdout.trim() === 'true'
+
+  return {
+    isSuperAdmin: true,
+    devModeAvailable: true,
+    branchPreviewAvailable: isGitRepo,
+    branchPreviewConfigured: isGitRepo,
+    canListBranches: isGitRepo,
+    canBuild: isGitRepo && enabled,
+    reason: isGitRepo ? null : 'not_git_repo',
+  }
+}
+
 export async function listRepositoryBranches(): Promise<string[]> {
+  const repoCheck = await gitCommand(['rev-parse', '--is-inside-work-tree'])
+  if (repoCheck.code !== 0 || repoCheck.stdout.trim() !== 'true') {
+    throw new Error('Branch preview repository is not configured as a git checkout')
+  }
+
   const result = await gitCommand(['for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'])
   if (result.code !== 0) {
     throw new Error(result.stderr.trim() || 'Failed to list repository branches')

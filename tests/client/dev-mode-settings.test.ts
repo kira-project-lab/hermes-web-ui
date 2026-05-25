@@ -6,6 +6,7 @@ import { defineComponent, h, reactive } from 'vue'
 const authState = vi.hoisted(() => ({ isSuperAdmin: true }))
 const fetchBranchBuildBranches = vi.hoisted(() => vi.fn())
 const fetchBranchBuildStatus = vi.hoisted(() => vi.fn())
+const fetchBranchPreviewCapabilities = vi.hoisted(() => vi.fn())
 const buildBranchPreview = vi.hoisted(() => vi.fn())
 const resetBranchPreview = vi.hoisted(() => vi.fn())
 const useMessageMock = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ vi.mock('@/api/client', () => ({
 vi.mock('@/api/hermes/dev-mode-branch-builds', () => ({
   fetchBranchBuildBranches: (...args: any[]) => fetchBranchBuildBranches(...args),
   fetchBranchBuildStatus: (...args: any[]) => fetchBranchBuildStatus(...args),
+  fetchBranchPreviewCapabilities: (...args: any[]) => fetchBranchPreviewCapabilities(...args),
   buildBranchPreview: (...args: any[]) => buildBranchPreview(...args),
   resetBranchPreview: (...args: any[]) => resetBranchPreview(...args),
 }))
@@ -85,30 +87,18 @@ vi.mock('naive-ui', async () => {
         ])
       },
     }),
-    NInput: defineComponent({
-      props: { value: [String, Number], readonly: Boolean },
-      setup(props) {
-        return () => h('input', { class: 'n-input', value: props.value as any, readonly: props.readonly ?? true })
-      },
-    }),
-    NInputGroup: defineComponent({
-      setup(_props, { slots }) {
-        return () => h('div', { class: 'n-input-group' }, slots.default?.())
-      },
-    }),
-    NInputGroupLabel: defineComponent({
-      setup(_props, { slots }) {
-        return () => h('div', { class: 'n-input-group-label' }, slots.default?.())
-      },
-    }),
     NSelect: defineComponent({
-      props: { value: String, options: { type: Array, default: () => [] }, disabled: Boolean, loading: Boolean },
+      name: 'NSelect',
+      props: { value: String, options: { type: Array, default: () => [] }, disabled: Boolean, loading: Boolean, filterable: Boolean, clearable: Boolean, placeholder: String },
       emits: ['update:value'],
       setup(props, { emit }) {
         return () => h('select', {
           class: 'n-select',
           disabled: props.disabled,
           value: props.value,
+          'data-filterable': String(!!props.filterable),
+          'data-clearable': String(!!props.clearable),
+          'data-placeholder': props.placeholder,
           onChange: (event: Event) => emit('update:value', (event.target as HTMLSelectElement).value),
         }, (props.options as Array<{ label: string; value: string }>).map((opt) => h('option', { value: opt.value }, opt.label)))
       },
@@ -149,11 +139,33 @@ function resetStore() {
   settingsStore.updateLocal.mockClear()
 }
 
+function mountComponent() {
+  return mount(DevModeSettings, {
+    global: {
+      stubs: {
+        SettingRow: {
+          props: ['label', 'hint'],
+          template: '<div class="setting-row"><div class="setting-row-label">{{ label }}</div><div class="setting-row-hint">{{ hint }}</div><slot /></div>',
+        },
+      },
+    },
+  })
+}
+
 describe('DevModeSettings', () => {
   beforeEach(() => {
     authState.isSuperAdmin = true
     resetStore()
     vi.clearAllMocks()
+    fetchBranchPreviewCapabilities.mockResolvedValue({
+      isSuperAdmin: true,
+      devModeAvailable: true,
+      branchPreviewAvailable: true,
+      branchPreviewConfigured: true,
+      canListBranches: true,
+      canBuild: false,
+      reason: null,
+    })
     fetchBranchBuildBranches.mockResolvedValue(['fork-review/review-base', 'fork-review/dev-a', 'fork-review/dev-b'])
     fetchBranchBuildStatus.mockResolvedValue({
       status: 'idle',
@@ -197,52 +209,107 @@ describe('DevModeSettings', () => {
     })
   })
 
-  it('loads branches before Dev Mode is enabled and keeps status disabled without errors', async () => {
-    const wrapper = mount(DevModeSettings, {
-      global: {
-        stubs: {
-          SettingRow: {
-            props: ['label', 'hint'],
-            template: '<div class="setting-row"><div class="setting-row-label">{{ label }}</div><div class="setting-row-hint">{{ hint }}</div><slot /></div>',
-          },
-        },
-      },
-    })
+  it('renders the minimal primary UI and hides advanced/debug fields by default', async () => {
+    const wrapper = mountComponent()
 
     await flushPromises()
 
     expect(fetchBranchBuildBranches).toHaveBeenCalledTimes(1)
-    expect(useMessageMock.error).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('settings.dev.disabledNote')
-    expect(wrapper.findAll('select').length).toBe(3)
+    expect(fetchBranchBuildStatus).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('settings.dev.warningTitle')
+    expect(wrapper.text()).toContain('settings.dev.branchPreviewTitle')
+    expect(wrapper.text()).toContain('settings.dev.branchToPreview')
+    expect(wrapper.text()).toContain('settings.dev.currentPreview')
+    expect(wrapper.text()).toContain('settings.dev.buildPreview')
+    expect(wrapper.text()).toContain('settings.dev.resetToBase')
+    expect(wrapper.text()).toContain('settings.dev.advancedDetails')
+    expect(wrapper.text()).not.toContain('settings.dev.worktreePath')
+    expect(wrapper.text()).not.toContain('settings.dev.exitCode')
+    expect(wrapper.text()).not.toContain('settings.dev.signal')
+    expect(wrapper.text()).not.toContain('settings.dev.startedAt')
+    expect(wrapper.text()).not.toContain('settings.dev.finishedAt')
+    expect(wrapper.text()).not.toContain('settings.dev.noLogs')
+
+    const selects = wrapper.findAll('select')
+    expect(selects).toHaveLength(1)
+    expect(selects[0].attributes('data-filterable')).toBe('true')
+    expect(selects[0].attributes('data-placeholder')).toBe('settings.dev.branchToPreviewPlaceholder')
+    expect(selects[0].element.querySelectorAll('option')).toHaveLength(3)
+    expect((wrapper.find('button.advanced-summary').element as HTMLButtonElement).textContent).toContain('settings.dev.advancedDetails')
+
   })
 
-  it('does not call status until save succeeds when enabling Dev Mode', async () => {
-    const wrapper = mount(DevModeSettings, {
-      global: {
-        stubs: {
-          SettingRow: {
-            props: ['label', 'hint'],
-            template: '<div class="setting-row"><div class="setting-row-label">{{ label }}</div><div class="setting-row-hint">{{ hint }}</div><slot /></div>',
-          },
-        },
-      },
+  it('reveals advanced details when opened and auto-opens on failed build status', async () => {
+    fetchBranchBuildStatus.mockResolvedValue({
+      status: 'failed',
+      previewBranch: 'fork-review/dev-b',
+      previewWorktreePath: '/tmp/worktree',
+      buildBranch: 'fork-review/dev-b',
+      startedAt: 10,
+      finishedAt: 20,
+      exitCode: 1,
+      signal: 'SIGTERM',
+      error: 'build exploded',
+      reviewBase: 'fork-review/review-base',
+      logTail: ['line one', 'line two'],
     })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('settings.dev.worktreePath')
+    expect(wrapper.text()).toContain('settings.dev.startedAt')
+    expect(wrapper.text()).toContain('settings.dev.finishedAt')
+    expect(wrapper.text()).toContain('settings.dev.exitCode')
+    expect(wrapper.text()).toContain('settings.dev.signal')
+    expect(wrapper.text()).toContain('build exploded')
+    expect(wrapper.text()).toContain('line one')
+    expect(wrapper.text()).toContain('line two')
+
+    const toggle = wrapper.find('button.advanced-summary')
+    await toggle.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('settings.dev.worktreePath')
+    expect(wrapper.text()).not.toContain('settings.dev.startedAt')
+    expect(wrapper.text()).not.toContain('settings.dev.finishedAt')
+  })
+
+  it('keeps Build preview disabled until Dev Mode is persisted', async () => {
+    const wrapper = mountComponent()
+
+    await flushPromises()
+
+    const buildButton = wrapper.findAll('button').find((button) => button.text() === 'settings.dev.buildPreview')!
+    expect(buildButton.attributes('disabled')).toBeDefined()
+
+    await wrapper.find('.n-switch').trigger('click')
+    await flushPromises()
+
+    expect(settingsStore.dev.enabled).toBe(false)
+    expect(buildButton.attributes('disabled')).toBeDefined()
+  })
+
+  it('saves the selected preview/base branches only after save succeeds and refreshes status', async () => {
+    const wrapper = mountComponent()
 
     await flushPromises()
     fetchBranchBuildStatus.mockClear()
     settingsStore.saveSection.mockClear()
 
+    await wrapper.find('button.advanced-summary').trigger('click')
+    await flushPromises()
+
     const selects = wrapper.findAll('select')
-    await selects[0].setValue('fork-review/dev-a')
-    await selects[1].setValue('fork-review/dev-b')
+    await selects[0].setValue('fork-review/dev-b')
+    await selects[1].setValue('fork-review/dev-a')
     await wrapper.find('.n-switch').trigger('click')
 
     expect(settingsStore.dev.enabled).toBe(false)
     expect(fetchBranchBuildStatus).not.toHaveBeenCalled()
 
-    const buttons = wrapper.findAll('button')
-    await buttons.find((button) => button.text() === 'common.save')!.trigger('click')
+    const saveButton = wrapper.findAll('button').find((button) => button.text() === 'common.save')!
+    await saveButton.trigger('click')
     await flushPromises()
 
     expect(settingsStore.saveSection).toHaveBeenCalledWith('dev', {
@@ -254,24 +321,40 @@ describe('DevModeSettings', () => {
     expect(useMessageMock.success).toHaveBeenCalledWith('settings.saved')
   })
 
-  it('shows a permission alert and avoids branch API calls for non-super-admin users', async () => {
-    authState.isSuperAdmin = false
-
-    const wrapper = mount(DevModeSettings, {
-      global: {
-        stubs: {
-          SettingRow: {
-            props: ['label', 'hint'],
-            template: '<div class="setting-row"><slot /></div>',
-          },
-        },
-      },
+  it('shows a compact unavailable state when branch preview is not configured', async () => {
+    fetchBranchPreviewCapabilities.mockResolvedValue({
+      isSuperAdmin: true,
+      devModeAvailable: true,
+      branchPreviewAvailable: false,
+      branchPreviewConfigured: false,
+      canListBranches: false,
+      canBuild: false,
+      reason: 'not_git_repo',
     })
 
+    const wrapper = mountComponent()
     await flushPromises()
 
+    expect(fetchBranchPreviewCapabilities).toHaveBeenCalledTimes(1)
     expect(fetchBranchBuildBranches).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('settings.dev.permissionTitle')
-    expect(wrapper.text()).toContain('settings.dev.permissionBody')
+    expect(fetchBranchBuildStatus).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('settings.dev.notConfiguredTitle')
+    expect(wrapper.text()).toContain('settings.dev.capabilityReasons.not_git_repo')
+    expect(wrapper.text()).not.toContain('settings.dev.branchToPreview')
+    expect(wrapper.text()).not.toContain('settings.dev.buildPreview')
+  })
+
+  it('renders nothing for non-super-admin users', async () => {
+    authState.isSuperAdmin = false
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect(fetchBranchPreviewCapabilities).not.toHaveBeenCalled()
+    expect(fetchBranchBuildBranches).not.toHaveBeenCalled()
+    expect(fetchBranchBuildStatus).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('settings.dev.permissionTitle')
+    expect(wrapper.text()).not.toContain('settings.dev.branchToPreview')
+    expect(wrapper.text()).not.toContain('settings.dev.branchPreviewTitle')
   })
 })

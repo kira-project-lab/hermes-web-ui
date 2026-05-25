@@ -4,6 +4,7 @@ import * as ctrl from '../../controllers/hermes/dev-mode-branch-builds'
 
 export const devModeBranchBuildRoutes = new Router()
 
+devModeBranchBuildRoutes.get('/api/hermes/dev/branch-builds/capabilities', requireSuperAdmin, ctrl.getCapabilities)
 devModeBranchBuildRoutes.get('/api/hermes/dev/branch-builds/branches', requireSuperAdmin, ctrl.listBranches)
 devModeBranchBuildRoutes.get('/api/hermes/dev/branch-builds/status', requireSuperAdmin, ctrl.getStatus)
 devModeBranchBuildRoutes.post('/api/hermes/dev/branch-builds/build', requireSuperAdmin, ctrl.buildBranch)

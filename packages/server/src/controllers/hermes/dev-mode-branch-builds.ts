@@ -1,8 +1,12 @@
 import { getActiveProfileName } from '../../services/hermes/hermes-profile'
-import { getBranchBuildSummary, isDevModeEnabled, listRepositoryBranches, resetPreviewTarget, startBranchBuild } from '../../services/hermes/dev-mode-branch-builds'
+import { getBranchBuildSummary, getBranchPreviewCapabilities, isDevModeEnabled, listRepositoryBranches, resetPreviewTarget, startBranchBuild } from '../../services/hermes/dev-mode-branch-builds'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
+
+function isSuperAdmin(ctx: any): boolean {
+  return ctx.state?.user?.role === 'super_admin'
 }
 
 async function requireDevMode(ctx: any): Promise<string | null> {
@@ -13,6 +17,15 @@ async function requireDevMode(ctx: any): Promise<string | null> {
     return null
   }
   return profile
+}
+
+export async function getCapabilities(ctx: any) {
+  try {
+    ctx.body = await getBranchPreviewCapabilities(requestedProfile(ctx), isSuperAdmin(ctx))
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to read branch preview capabilities' }
+  }
 }
 
 export async function listBranches(ctx: any) {
