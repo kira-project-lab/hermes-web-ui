@@ -4,6 +4,9 @@ import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 
+const useDialogWarning = vi.fn()
+const useMessageSuccess = vi.fn()
+
 vi.mock('@/stores/hermes/app', () => ({
   useAppStore: () => ({
     profileModelGroups: [],
@@ -24,21 +27,24 @@ vi.mock('@/shared/session-display', () => ({
 }))
 
 vi.mock('naive-ui', () => ({
-  NPopconfirm: defineComponent({
-    name: 'NPopconfirm',
-    emits: ['positive-click'],
-    template: '<span><slot name="trigger" /><slot /></span>',
-  }),
   NCheckbox: defineComponent({
     name: 'NCheckbox',
     props: ['checked'],
     emits: ['click'],
     template: '<input type="checkbox" :checked="checked" @click="$emit(\'click\')" />',
   }),
+  NDropdown: defineComponent({
+    name: 'NDropdown',
+    props: ['options', 'trigger', 'placement'],
+    emits: ['select'],
+    template: '<div class="n-dropdown-stub"><slot /></div>',
+  }),
   NTooltip: defineComponent({
     name: 'NTooltip',
     template: '<span><slot name="trigger" /><slot /></span>',
   }),
+  useDialog: () => ({ warning: useDialogWarning }),
+  useMessage: () => ({ success: useMessageSuccess }),
 }))
 
 const session = {
@@ -51,7 +57,7 @@ const session = {
 }
 
 describe('SessionListItem', () => {
-  it('renders normal mode as a link to the session route', () => {
+  it('renders normal mode with a detached hover-only actions trigger and no delete button', () => {
     const wrapper = mount(SessionListItem, {
       props: {
         session,
@@ -67,12 +73,16 @@ describe('SessionListItem', () => {
       },
     })
 
-    const link = wrapper.get('a.session-item')
-    expect(link.attributes('href')).toBe('/session/s1')
-    expect(wrapper.find('button.session-item').exists()).toBe(false)
+    expect(wrapper.get('.session-item-shell').exists()).toBe(true)
+    expect(wrapper.get('a.session-item-link').attributes('href')).toBe('/session/s1')
+    expect(wrapper.find('button.session-item-more').exists()).toBe(true)
+    expect(wrapper.find('button.session-item-delete').exists()).toBe(false)
+    expect(wrapper.get('.session-item-actions').attributes('aria-hidden')).toBeUndefined()
+    expect(wrapper.get('button.session-item-more').attributes('aria-haspopup')).toBe('menu')
+    expect(wrapper.get('button.session-item-more').element.closest('.session-item-link')).toBeNull()
   })
 
-  it('renders selectable mode as a button and does not expose row href', () => {
+  it('renders selectable mode as a button and hides action controls', () => {
     const wrapper = mount(SessionListItem, {
       props: {
         session,
@@ -90,11 +100,43 @@ describe('SessionListItem', () => {
       },
     })
 
-    expect(wrapper.find('button.session-item').exists()).toBe(true)
-    expect(wrapper.find('a.session-item').exists()).toBe(false)
+    expect(wrapper.find('button.session-item-link').exists()).toBe(true)
+    expect(wrapper.find('a.session-item-link').exists()).toBe(false)
+    expect(wrapper.find('button.session-item-more').exists()).toBe(false)
   })
 
-  it('does not select the row when clicking nested action controls', async () => {
+  it('exposes the chat action menu when configured for chat mode', () => {
+    const wrapper = mount(SessionListItem, {
+      props: {
+        session,
+        active: false,
+        pinned: true,
+        canDelete: true,
+        menuMode: 'chat',
+        to: '/session/s1',
+      },
+      global: {
+        stubs: {
+          ProfileAvatar: true,
+        },
+      },
+    })
+
+    const options = wrapper.getComponent({ name: 'NDropdown' }).props('options') as Array<{ label?: string; key?: string; children?: Array<{ label?: string; key?: string }> }>
+    expect(options.map(option => option.label)).toEqual(expect.arrayContaining([
+      'chat.unpin',
+      'chat.rename',
+      'chat.setWorkspace',
+      'chat.export',
+      'chat.openSessionInNewTab',
+      'chat.copySessionLink',
+      'chat.copySessionId',
+      'chat.deleteSession',
+    ]))
+    expect(options.some(option => option.key === 'export')).toBe(true)
+  })
+
+  it('does not select the row when clicking the actions trigger', async () => {
     const wrapper = mount(SessionListItem, {
       props: {
         session,
@@ -110,7 +152,7 @@ describe('SessionListItem', () => {
       },
     })
 
-    await wrapper.get('button.session-item-delete').trigger('click')
+    await wrapper.get('button.session-item-more').trigger('click')
     expect(wrapper.emitted('select')).toBeUndefined()
   })
 
@@ -130,7 +172,7 @@ describe('SessionListItem', () => {
       },
     })
 
-    const link = wrapper.get('a.session-item')
+    const link = wrapper.get('a.session-item-link')
     link.element.addEventListener('click', event => event.preventDefault())
     await link.trigger('click', { ctrlKey: true })
     expect(wrapper.emitted('select')).toBeUndefined()

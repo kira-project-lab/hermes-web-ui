@@ -8,9 +8,8 @@ test('opens terminal websocket session and forwards user input', async ({ page }
 
   await page.goto('/#/hermes/terminal')
 
-  await expect(page.getByText('Sessions')).toBeVisible()
+  await expect(page.locator('.session-list-title').first()).toBeVisible()
   await expect(page.locator('.session-item-title', { hasText: 'zsh #1' })).toBeVisible()
-
   const terminalState = await page.waitForFunction(() => {
     const state = (window as any).__PW_TERMINAL_WS__
     return state?.sockets?.length
@@ -27,6 +26,21 @@ test('opens terminal websocket session and forwards user input', async ({ page }
 
   await page.locator('.terminal-header .header-actions button').last().click()
   await expect(page.locator('.session-item-title', { hasText: 'bash #2' })).toBeVisible()
+
+  const terminalSessions = page.locator('.session-item').filter({ hasText: 'zsh #1' }).first()
+  const activeSessionTitle = page.locator('.session-item.active .session-item-title').first()
+  const activeBefore = await activeSessionTitle.textContent()
+  await expect(terminalSessions.locator('.session-item-delete')).toBeVisible()
+  await terminalSessions.hover()
+  await expect(terminalSessions.locator('.session-item-delete')).toBeVisible()
+  await terminalSessions.focus()
+  await expect(terminalSessions.locator('.session-item-delete')).toBeVisible()
+  await terminalSessions.locator('.session-item-delete').focus()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.session-item.active .session-item-title').first()).toHaveText(activeBefore || '')
+  await terminalSessions.locator('.session-item-delete').focus()
+  await page.keyboard.press('Space')
+  await expect(page.locator('.session-item.active .session-item-title').first()).toHaveText(activeBefore || '')
 
   await page.locator('.terminal-xterm').click()
   await page.keyboard.type('pwd')
