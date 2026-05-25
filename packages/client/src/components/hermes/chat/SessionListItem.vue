@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onUnmounted } from 'vue'
-import { NCheckbox, NDropdown, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
+import { NCheckbox, NDropdown, NTooltip, useDialog, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { Session } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
@@ -8,6 +8,7 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import { formatTimestampMs } from '@/shared/session-display'
+import { createSessionActionOptions, promptSessionDelete } from './session-action-menu'
 
 const props = withDefaults(defineProps<{
   session: Session
@@ -56,59 +57,15 @@ const profileModelsMissing = computed(() =>
 
 const menuTriggerLabel = computed(() => t('chat.sessionActions'))
 
-const menuOptions = computed<DropdownOption[]>(() => {
-  const options: DropdownOption[] = []
-
-  if (props.menuMode === 'chat') {
-    options.push(
-      { label: props.pinned ? t('chat.unpin') : t('chat.pin'), key: 'pin' },
-      { label: t('chat.rename'), key: 'rename' },
-      { label: t('chat.setWorkspace'), key: 'workspace' },
-    )
-
-    if (props.session.source === 'cli') {
-      options.push({ label: t('chat.setModel'), key: 'model' })
-    }
-
-    options.push({
-      label: t('chat.export'),
-      key: 'export',
-      children: [
-        {
-          label: t('chat.exportFull'),
-          key: 'export-full',
-          children: [
-            { label: 'JSON', key: 'export-full-json' },
-            { label: 'TXT', key: 'export-full-txt' },
-          ],
-        },
-        {
-          label: t('chat.exportCompressed'),
-          key: 'export-compressed',
-          children: [
-            { label: 'JSON', key: 'export-compressed-json' },
-            { label: 'TXT', key: 'export-compressed-txt' },
-          ],
-        },
-      ],
-    })
-  }
-
-  if (props.to) {
-    options.push(
-      { label: t('chat.openSessionInNewTab'), key: 'open-link' },
-      { label: t('chat.copySessionLink'), key: 'copy-link' },
-    )
-  }
-
-  options.push({ label: t('chat.copySessionId'), key: 'copy-id' })
-
-  if (props.canDelete && !props.selectable) {
-    options.push({ label: t('chat.deleteSession'), key: 'delete', danger: true })
-  }
-
-  return options
-})
+const menuOptions = computed(() =>
+  createSessionActionOptions(t, {
+    mode: props.menuMode,
+    pinned: props.pinned,
+    canDelete: props.canDelete && !props.selectable,
+    to: props.to,
+    source: props.session.source,
+  }),
+)
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 const longPressTriggered = ref(false)
@@ -173,13 +130,7 @@ async function copySessionId() {
 }
 
 function confirmDelete() {
-  dialog.warning({
-    title: t('chat.deleteSession'),
-    content: t('files.confirmDelete', { name: props.session.title }),
-    positiveText: t('common.ok'),
-    negativeText: t('common.cancel'),
-    onPositiveClick: () => emit('delete'),
-  })
+  promptSessionDelete(dialog, t, props.session.title, () => emit('delete'))
 }
 
 async function handleMenuSelect(key: string) {

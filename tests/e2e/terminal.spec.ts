@@ -8,7 +8,7 @@ test('opens terminal websocket session and forwards user input', async ({ page }
 
   await page.goto('/#/hermes/terminal')
 
-  await expect(page.locator('.session-list-title').first()).toBeVisible()
+  await expect(page.getByText('Sessions')).toBeVisible()
   await expect(page.locator('.session-item-title', { hasText: 'zsh #1' })).toBeVisible()
   const terminalState = await page.waitForFunction(() => {
     const state = (window as any).__PW_TERMINAL_WS__

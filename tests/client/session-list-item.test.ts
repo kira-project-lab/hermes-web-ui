@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
+import { createSessionActionOptions, promptSessionDelete } from '@/components/hermes/chat/session-action-menu'
 
 const useDialogWarning = vi.fn()
 const useMessageSuccess = vi.fn()
@@ -131,9 +132,44 @@ describe('SessionListItem', () => {
       'chat.openSessionInNewTab',
       'chat.copySessionLink',
       'chat.copySessionId',
-      'chat.deleteSession',
+      'common.delete',
     ]))
     expect(options.some(option => option.key === 'export')).toBe(true)
+  })
+
+  it('builds the shared chat action menu and delete confirm with a short destructive label', () => {
+    const options = createSessionActionOptions((key) => key, {
+      mode: 'chat',
+      pinned: true,
+      canDelete: true,
+      to: '/session/s1',
+      source: 'cli',
+    })
+
+    expect(options.map(option => option.label)).toEqual(expect.arrayContaining([
+      'chat.unpin',
+      'chat.rename',
+      'chat.setWorkspace',
+      'chat.setModel',
+      'chat.export',
+      'chat.openSessionInNewTab',
+      'chat.copySessionLink',
+      'chat.copySessionId',
+      'common.delete',
+    ]))
+
+    const warning = vi.fn()
+    promptSessionDelete({ warning } as any, (key) => key, 'Session One', vi.fn())
+
+    expect(warning).toHaveBeenCalledTimes(1)
+    const [dialogOptions] = warning.mock.calls[0] as [Record<string, any>]
+    expect(dialogOptions.title).toBe('Session One')
+    expect(dialogOptions.positiveText).toBe('common.delete')
+    expect(dialogOptions.negativeText).toBe('common.cancel')
+    const contentNode = dialogOptions.content()
+    expect(contentNode.type).toBe('span')
+    expect(contentNode.props.style).toContain('var(--error)')
+    expect(contentNode.children).toBe('common.delete')
   })
 
   it('does not select the row when clicking the actions trigger', async () => {
