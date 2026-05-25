@@ -17,8 +17,6 @@ async function requireDevMode(ctx: any): Promise<string | null> {
 
 export async function listBranches(ctx: any) {
   try {
-    const profile = await requireDevMode(ctx)
-    if (!profile) return
     ctx.body = { branches: await listRepositoryBranches() }
   } catch (err: any) {
     ctx.status = 500
@@ -28,9 +26,7 @@ export async function listBranches(ctx: any) {
 
 export async function getStatus(ctx: any) {
   try {
-    const profile = await requireDevMode(ctx)
-    if (!profile) return
-    ctx.body = await getBranchBuildSummary(profile)
+    ctx.body = await getBranchBuildSummary(requestedProfile(ctx))
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err?.message || 'Failed to read branch build status' }
@@ -48,7 +44,8 @@ export async function buildBranch(ctx: any) {
   try {
     const profile = await requireDevMode(ctx)
     if (!profile) return
-    ctx.body = await startBranchBuild(profile, branch.trim())
+    const result = await startBranchBuild(profile, branch.trim())
+    ctx.body = { ...await getBranchBuildSummary(profile), worktreePath: result.worktreePath }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err?.message || 'Branch build failed' }
