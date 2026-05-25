@@ -293,6 +293,7 @@ export default {
     copySessionLink: 'Copy Session Link',
     openSessionInNewTab: 'Open in new tab',
     sessionLinkCopied: 'Session link copied',
+    sessionActions: 'Session Actions',
     copySessionId: 'Copy Session ID',
     export: 'Export',
     exportFull: 'Full Export (JSON)',
