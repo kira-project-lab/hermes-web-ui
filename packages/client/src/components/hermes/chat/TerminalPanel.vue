@@ -476,12 +476,16 @@ onUnmounted(() => {
             {{ t("terminal.noSessions") }}
           </template>
         </div>
-        <button
+        <div
           v-for="s in sessions"
           :key="s.id"
           class="session-item"
           :class="{ active: s.id === activeSessionId, exited: s.exited }"
+          role="button"
+          tabindex="0"
           @click="switchSession(s.id)"
+          @keydown.enter.self.prevent="switchSession(s.id)"
+          @keydown.space.self.prevent="switchSession(s.id)"
         >
           <div class="session-item-content">
             <span class="session-item-title">{{ s.title }}</span>
@@ -497,7 +501,7 @@ onUnmounted(() => {
           </div>
           <NPopconfirm v-if="sessions.length > 1" @positive-click="closeSession(s.id)">
             <template #trigger>
-              <button class="session-item-delete" @click.stop>
+              <button class="session-item-delete" :aria-label="t('terminal.closeSession')" @click.stop @keydown.stop>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
@@ -506,7 +510,7 @@ onUnmounted(() => {
             </template>
             {{ t("terminal.closeSession") }}
           </NPopconfirm>
-        </button>
+        </div>
       </div>
     </div>
 
@@ -679,12 +683,19 @@ onUnmounted(() => {
   transition: all $transition-fast;
   margin-bottom: 2px;
 
-  &:hover {
+  &:focus-visible {
+    outline: 2px solid rgba(var(--accent-primary-rgb), 0.35);
+    outline-offset: 1px;
+  }
+
+  &:hover,
+  &:focus-within {
     background: rgba(var(--accent-primary-rgb), 0.06);
     color: $text-primary;
 
     .session-item-delete {
       opacity: 1;
+      pointer-events: auto;
     }
   }
 
@@ -736,7 +747,8 @@ onUnmounted(() => {
 
 .session-item-delete {
   flex-shrink: 0;
-  opacity: 0.5;
+  opacity: 0;
+  pointer-events: none;
   padding: 2px;
   border: none;
   background: none;
@@ -748,6 +760,13 @@ onUnmounted(() => {
   &:hover {
     color: $error;
     background: rgba(var(--error-rgb), 0.1);
+  }
+}
+
+@media (hover: none) {
+  .session-item-delete {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
