@@ -3,6 +3,7 @@ import { request } from '../client'
 export type BranchBuildStatus = 'idle' | 'running' | 'success' | 'failed'
 
 export interface BranchBuildSummary {
+  enabled: boolean
   status: BranchBuildStatus
   previewBranch: string | null
   previewWorktreePath: string | null

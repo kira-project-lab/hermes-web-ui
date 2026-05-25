@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NInput, NInputGroup, NInputGroupLabel, NSelect, NSpace, NSwitch, NTag, NCard, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { isStoredSuperAdmin } from '@/api/client'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import {
   buildBranchPreview,
@@ -11,6 +12,8 @@ import {
   type BranchBuildSummary,
 } from '@/api/hermes/dev-mode-branch-builds'
 import SettingRow from './SettingRow.vue'
+
+const DEFAULT_REVIEW_BASE = 'fork-review/review-base'
 
 const settingsStore = useSettingsStore()
 const message = useMessage()
@@ -22,20 +25,40 @@ const selectedBranch = ref('')
 const branchBuild = ref<BranchBuildSummary | null>(null)
 const saving = ref(false)
 const running = ref(false)
+const draftEnabled = ref(false)
+const draftReviewBase = ref(DEFAULT_REVIEW_BASE)
+const draftPreviewBranch = ref('')
+const canUseDevMode = computed(() => isStoredSuperAdmin())
 
-const devEnabled = computed(() => !!settingsStore.dev.enabled)
-const reviewBase = computed({
-  get: () => settingsStore.dev.review_base || 'fork-review/review-base',
-  set: (value: string) => {
-    settingsStore.updateLocal('dev', { review_base: value })
-  },
-})
-const previewBranch = computed({
-  get: () => settingsStore.dev.preview_branch || '',
-  set: (value: string) => {
-    settingsStore.updateLocal('dev', { preview_branch: value })
-  },
-})
+const persistedDevEnabled = computed(() => !!settingsStore.dev.enabled)
+const branchOptions = computed(() => branchList.value.map((branch) => ({ label: branch, value: branch })))
+const settingsChanged = computed(() => draftEnabled.value !== persistedDevEnabled.value ||
+  draftReviewBase.value !== (settingsStore.dev.review_base || DEFAULT_REVIEW_BASE) ||
+  draftPreviewBranch.value !== (settingsStore.dev.preview_branch || ''))
+const canRunPreviewActions = computed(() => canUseDevMode.value && persistedDevEnabled.value)
+
+function syncDraftFromStore() {
+  draftEnabled.value = !!settingsStore.dev.enabled
+  draftReviewBase.value = settingsStore.dev.review_base || DEFAULT_REVIEW_BASE
+  draftPreviewBranch.value = settingsStore.dev.preview_branch || ''
+  if (!selectedBranch.value && draftPreviewBranch.value) {
+    selectedBranch.value = draftPreviewBranch.value
+  }
+}
+
+function ensureSelectedBranches() {
+  if (!draftReviewBase.value && branchList.value.includes(DEFAULT_REVIEW_BASE)) {
+    draftReviewBase.value = DEFAULT_REVIEW_BASE
+  }
+  if (!draftReviewBase.value && branchList.value.length) {
+    draftReviewBase.value = branchList.value[0]
+  }
+  if (!selectedBranch.value || !branchList.value.includes(selectedBranch.value)) {
+    selectedBranch.value = draftPreviewBranch.value && branchList.value.includes(draftPreviewBranch.value)
+      ? draftPreviewBranch.value
+      : branchList.value[0] || ''
+  }
+}
 
 function statusType(status: BranchBuildSummary['status']) {
   switch (status) {
@@ -51,25 +74,36 @@ function fmtTime(value: number | null) {
   return new Date(value).toLocaleString()
 }
 
-async function refreshStatus() {
-  if (!devEnabled.value) {
-    branchBuild.value = null
-    return
-  }
+async function refreshBranches() {
+  if (!canUseDevMode.value) return
+  loading.value = true
   try {
-    loading.value = true
+    branchList.value = await fetchBranchBuildBranches()
+    ensureSelectedBranches()
+  } catch (err: any) {
+    message.error(err?.message || t('settings.dev.loadFailed'))
+  } finally {
+    loading.value = false
+  }
+}
+
+async function refreshStatus() {
+  if (!canUseDevMode.value) return
+  loading.value = true
+  try {
     const [status, branches] = await Promise.all([
       fetchBranchBuildStatus(),
       fetchBranchBuildBranches(),
     ])
     branchBuild.value = status
     branchList.value = branches
-    if (!selectedBranch.value || !branches.includes(selectedBranch.value)) {
-      selectedBranch.value = status.buildBranch || status.previewBranch || branches[0] || ''
-    }
     if (status.previewBranch) {
-      settingsStore.updateLocal('dev', { preview_branch: status.previewBranch, review_base: status.reviewBase })
+      draftPreviewBranch.value = status.previewBranch
     }
+    if (status.reviewBase) {
+      draftReviewBase.value = status.reviewBase
+    }
+    ensureSelectedBranches()
   } catch (err: any) {
     message.error(err?.message || t('settings.dev.loadFailed'))
   } finally {
@@ -78,14 +112,17 @@ async function refreshStatus() {
 }
 
 async function saveDevSettings() {
+  if (!canUseDevMode.value) return
   saving.value = true
   try {
     await settingsStore.saveSection('dev', {
-      enabled: settingsStore.dev.enabled,
-      review_base: reviewBase.value,
-      preview_branch: previewBranch.value,
+      enabled: draftEnabled.value,
+      review_base: draftReviewBase.value,
+      preview_branch: draftPreviewBranch.value,
     })
+    syncDraftFromStore()
     message.success(t('settings.saved'))
+    await refreshStatus()
   } catch (err: any) {
     message.error(err?.message || t('settings.saveFailed'))
   } finally {
@@ -102,9 +139,11 @@ async function buildSelectedBranch() {
   try {
     const result = await buildBranchPreview(selectedBranch.value)
     branchBuild.value = result
+    draftPreviewBranch.value = result.previewBranch || selectedBranch.value
+    draftReviewBase.value = result.reviewBase || draftReviewBase.value
     settingsStore.updateLocal('dev', {
-      preview_branch: result.previewBranch,
-      review_base: result.reviewBase,
+      preview_branch: draftPreviewBranch.value,
+      review_base: draftReviewBase.value,
     })
     message.success(t('settings.dev.buildStarted'))
     await refreshStatus()
@@ -120,9 +159,11 @@ async function resetToReviewBase() {
   try {
     const result = await resetBranchPreview()
     branchBuild.value = result
+    draftPreviewBranch.value = result.previewBranch || ''
+    draftReviewBase.value = result.reviewBase || draftReviewBase.value
     settingsStore.updateLocal('dev', {
-      preview_branch: result.previewBranch,
-      review_base: result.reviewBase,
+      preview_branch: draftPreviewBranch.value,
+      review_base: draftReviewBase.value,
     })
     message.success(t('settings.dev.resetDone'))
     await refreshStatus()
@@ -133,18 +174,12 @@ async function resetToReviewBase() {
   }
 }
 
-watch(devEnabled, async (enabled) => {
-  if (enabled) {
-    await refreshStatus()
-  } else {
-    branchBuild.value = null
-  }
-})
+watch(() => ({ ...settingsStore.dev }), () => {
+  syncDraftFromStore()
+}, { immediate: true })
 
 onMounted(async () => {
-  if (devEnabled.value) {
-    await refreshStatus()
-  }
+  await refreshStatus()
 })
 </script>
 
@@ -154,45 +189,64 @@ onMounted(async () => {
       {{ t('settings.dev.warningBody') }}
     </NAlert>
 
+    <NAlert v-if="!canUseDevMode" type="error" class="dev-warning" :title="t('settings.dev.permissionTitle')">
+      {{ t('settings.dev.permissionBody') }}
+    </NAlert>
+
     <SettingRow :label="t('settings.dev.enabled')" :hint="t('settings.dev.enabledHint')">
       <NSwitch
-        :value="devEnabled"
-        @update:value="(value) => settingsStore.updateLocal('dev', { enabled: value })"
+        :value="draftEnabled"
+        :disabled="!canUseDevMode"
+        @update:value="(value) => { draftEnabled = value }"
       />
     </SettingRow>
 
     <SettingRow :label="t('settings.dev.reviewBase')" :hint="t('settings.dev.reviewBaseHint')">
-      <NInput
-        :value="reviewBase"
+      <NSelect
+        v-model:value="draftReviewBase"
+        filterable
         size="small"
         class="input-lg"
-        :disabled="!devEnabled"
-        @update:value="reviewBase = $event"
+        :loading="loading"
+        :options="branchOptions"
+        :placeholder="t('settings.dev.reviewBasePlaceholder')"
+        :disabled="!canUseDevMode || running"
       />
     </SettingRow>
 
     <SettingRow :label="t('settings.dev.previewBranch')" :hint="t('settings.dev.previewBranchHint')">
-      <NInput
-        :value="previewBranch"
+      <NSelect
+        v-model:value="draftPreviewBranch"
+        filterable
+        clearable
         size="small"
         class="input-lg"
-        :disabled="!devEnabled"
-        @update:value="previewBranch = $event"
+        :loading="loading"
+        :options="branchOptions"
+        :placeholder="t('settings.dev.previewBranchPlaceholder')"
+        :disabled="!canUseDevMode || running"
       />
     </SettingRow>
 
     <div class="actions">
       <NSpace>
-        <NButton type="primary" :loading="saving" :disabled="!devEnabled" @click="saveDevSettings">
+        <NButton type="primary" :loading="saving" :disabled="!canUseDevMode || !settingsChanged" @click="saveDevSettings">
           {{ t('common.save') }}
         </NButton>
-        <NButton :loading="loading" :disabled="!devEnabled" @click="refreshStatus">
+        <NButton :loading="loading" :disabled="!canUseDevMode" @click="refreshStatus">
           {{ t('settings.dev.refresh') }}
+        </NButton>
+        <NButton :loading="loading" :disabled="!canUseDevMode" @click="refreshBranches">
+          {{ t('settings.dev.refreshBranches') }}
         </NButton>
       </NSpace>
     </div>
 
-    <NCard v-if="devEnabled" size="small" class="branch-preview-card" :title="t('settings.dev.branchPreviewTitle')">
+    <NAlert v-if="canUseDevMode && !persistedDevEnabled" type="info" class="dev-disabled-note">
+      {{ t('settings.dev.disabledNote') }}
+    </NAlert>
+
+    <NCard v-if="canUseDevMode" size="small" class="branch-preview-card" :title="t('settings.dev.branchPreviewTitle')">
       <template #header-extra>
         <NTag :type="statusType(branchBuild?.status || 'idle')" size="small">
           {{ branchBuild?.status || 'idle' }}
@@ -206,7 +260,7 @@ onMounted(async () => {
             v-model:value="selectedBranch"
             filterable
             :loading="loading"
-            :options="branchList.map((branch) => ({ label: branch, value: branch }))"
+            :options="branchOptions"
             :placeholder="t('settings.dev.branchPlaceholder')"
             :disabled="running"
           />
@@ -229,16 +283,16 @@ onMounted(async () => {
 
         <NInputGroup>
           <NInputGroupLabel>{{ t('settings.dev.reviewBase') }}</NInputGroupLabel>
-          <NInput :value="branchBuild?.reviewBase || reviewBase" readonly />
+          <NInput :value="branchBuild?.reviewBase || draftReviewBase" readonly />
         </NInputGroup>
       </div>
 
       <div class="actions">
         <NSpace>
-          <NButton type="info" :loading="running" :disabled="!selectedBranch || !branchList.length" @click="buildSelectedBranch">
+          <NButton type="info" :loading="running" :disabled="!canRunPreviewActions || !selectedBranch || !branchList.length" @click="buildSelectedBranch">
             {{ t('settings.dev.buildBranchAction') }}
           </NButton>
-          <NButton :loading="running" @click="resetToReviewBase">
+          <NButton :loading="running" :disabled="!canRunPreviewActions" @click="resetToReviewBase">
             {{ t('settings.dev.resetPreview') }}
           </NButton>
         </NSpace>
@@ -263,7 +317,8 @@ onMounted(async () => {
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
 
-.dev-warning {
+.dev-warning,
+.dev-disabled-note {
   margin-bottom: 16px;
 }
 

@@ -31,6 +31,7 @@ export interface BuildResult {
 }
 
 export interface BranchBuildSummary {
+  enabled: boolean
   status: BranchBuildStatus
   previewBranch: string | null
   previewWorktreePath: string | null
@@ -334,8 +335,12 @@ async function markBuildFailure(profile: string, error: string, exitCode: number
 }
 
 export async function getBranchBuildSummary(profile: string): Promise<BranchBuildSummary> {
-  const state = await readState(profile)
+  const [enabled, state] = await Promise.all([
+    isDevModeEnabled(profile),
+    readState(profile),
+  ])
   return {
+    enabled,
     status: state.status,
     previewBranch: state.previewBranch,
     previewWorktreePath: state.previewWorktreePath,
@@ -432,6 +437,7 @@ export async function resetPreviewTarget(profile: string): Promise<BranchBuildSu
   }))
 
   return {
+    enabled: true,
     status: state.status,
     previewBranch: state.previewBranch,
     previewWorktreePath: state.previewWorktreePath,
