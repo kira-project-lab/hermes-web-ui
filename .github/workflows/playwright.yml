@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - fork-review/**
 
 permissions:
   contents: read

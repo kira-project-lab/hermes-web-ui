@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - base
+      - fork-review/**
 
 jobs:
   build:
