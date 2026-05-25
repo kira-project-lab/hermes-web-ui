@@ -21,7 +21,6 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
 }))
 
 const disabledSummary = {
-  enabled: false,
   status: 'idle',
   previewBranch: 'fork-review/review-base',
   previewWorktreePath: null,
@@ -37,7 +36,6 @@ const disabledSummary = {
 
 const enabledSummary = {
   ...disabledSummary,
-  enabled: true,
   previewBranch: 'fork-review/a',
   buildBranch: 'fork-review/a',
 }
