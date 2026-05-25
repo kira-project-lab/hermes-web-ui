@@ -271,7 +271,7 @@ function handleNewChatProviderChange(value: string) {
 }
 
 async function confirmNewChat() {
-  const session = chatStore.newChat({
+  chatStore.newChat({
     profile: newChatProfile.value,
     provider: newChatProvider.value,
     model: newChatModel.value,
