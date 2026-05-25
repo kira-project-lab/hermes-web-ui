@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
 import { useAppStore } from '@/stores/hermes/app'
@@ -24,6 +24,11 @@ const routeProfile = computed(() => {
   return typeof value === 'string' && value.trim() ? value : null
 })
 
+const activeSessionTitle = computed(() => {
+  const session = chatStore.sessions.find(item => item.id === chatStore.activeSessionId)
+  return session?.title?.trim() || 'Hermes'
+})
+
 async function loadRouteSession() {
   await chatStore.loadSessions(chatStore.sessionProfileFilter, routeSessionId.value)
   if (routeSessionId.value && chatStore.activeSessionId !== routeSessionId.value) {
@@ -40,6 +45,17 @@ onMounted(async () => {
     settingsStore.fetchSettings(),
   ])
   await loadRouteSession()
+})
+
+onBeforeUnmount(() => {
+  document.title = 'Hermes'
+})
+
+watch([() => chatStore.activeSessionId, () => chatStore.sessions], () => {
+  document.title = activeSessionTitle.value
+}, {
+  deep: true,
+  immediate: true,
 })
 
 watch([routeSessionId, routeProfile], async ([sessionId]) => {

@@ -129,7 +129,6 @@ test('two tabs can show different sessions and keep them after reload', async ({
   expect(apiA.unexpectedRequests).toEqual([])
   expect(apiB.unexpectedRequests).toEqual([])
 })
-
 test('parallel tabs send runs and render progress only for their own session', async ({ context }) => {
   const pageA = await context.newPage()
   const pageB = await context.newPage()
@@ -138,14 +137,15 @@ test('parallel tabs send runs and render progress only for their own session', a
 
   await pageA.goto('/#/hermes/session/session-a')
   await pageB.goto('/#/hermes/session/session-b')
+
   await expect(pageA.getByText('Alpha route content')).toBeVisible()
   await expect(pageB.getByText('Beta route content')).toBeVisible()
 
-  await sendChatMessage(pageA, 'Question for Alpha')
-  await sendChatMessage(pageB, 'Question for Beta')
+  await sendChatMessage(pageA, 'Alpha from tab A')
+  await sendChatMessage(pageB, 'Beta from tab B')
 
-  const runA = await waitForRun(pageA)
-  const runB = await waitForRun(pageB)
+  const runA = await waitForRun(pageA, 0)
+  const runB = await waitForRun(pageB, 0)
   expect(runA.session_id).toBe('session-a')
   expect(runB.session_id).toBe('session-b')
 
@@ -166,4 +166,17 @@ test('parallel tabs send runs and render progress only for their own session', a
   await expect(pageB.getByText('Alpha progress')).toHaveCount(0)
   expect(apiA.unexpectedRequests).toEqual([])
   expect(apiB.unexpectedRequests).toEqual([])
+})
+
+test('chat tab title follows the active session title and updates on session switch', async ({ page }) => {
+  const api = await setupChatPage(page)
+
+  await page.goto('/#/hermes/session/session-b')
+  await expect(page).toHaveTitle('Beta chat')
+
+  await page.locator('.session-item', { hasText: 'Alpha chat' }).click()
+
+  await expect(page).toHaveURL(/\/hermes\/session\/session-a$/)
+  await expect(page).toHaveTitle('Alpha chat')
+  expect(api.unexpectedRequests).toEqual([])
 })
