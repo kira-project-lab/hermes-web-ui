@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { mkdir, readFile, rm } from 'fs/promises'
+import { lstat, mkdir, readFile, rm, symlink } from 'fs/promises'
 import { join, resolve } from 'path'
 import { randomUUID } from 'crypto'
 import { config } from '../../config'
@@ -294,6 +294,30 @@ async function removeWorktree(worktreePath: string | null | undefined): Promise<
   await rm(worktreePath, { recursive: true, force: true }).catch(() => undefined)
 }
 
+async function linkDependencyTree(profile: string, worktreePath: string): Promise<void> {
+  const sourceNodeModules = join(repoRoot(), 'node_modules')
+  const targetNodeModules = join(worktreePath, 'node_modules')
+
+  try {
+    const sourceStats = await lstat(sourceNodeModules)
+    if (!sourceStats.isDirectory() && !sourceStats.isSymbolicLink()) {
+      throw new Error(`${sourceNodeModules} is not a dependency directory`)
+    }
+  } catch (err: any) {
+    throw new Error(`Branch preview dependencies are not installed in ${repoRoot()}: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  try {
+    await lstat(targetNodeModules)
+    return
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') throw err
+  }
+
+  await symlink(sourceNodeModules, targetNodeModules, 'dir')
+  await appendLog(profile, `Linked dependencies from ${sourceNodeModules}`)
+}
+
 async function preparePreviewWorktree(profile: string, branch: string): Promise<string> {
   const worktreePath = uniqueWorktreePath(profile, branch)
   await mkdir(buildRootPath(profile), { recursive: true })
@@ -302,6 +326,7 @@ async function preparePreviewWorktree(profile: string, branch: string): Promise<
   if (addResult.code !== 0) {
     throw new Error(addResult.stderr.trim() || `Failed to create worktree for ${branch}`)
   }
+  await linkDependencyTree(profile, worktreePath)
   return worktreePath
 }
 
