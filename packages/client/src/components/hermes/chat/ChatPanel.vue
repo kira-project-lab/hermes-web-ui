@@ -12,8 +12,8 @@ import {
   NSelect,
   NTooltip,
   NPopconfirm,
+  useDialog,
   useMessage,
-  type DropdownOption,
 } from "naive-ui";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -26,6 +26,7 @@ import MessageList from "./MessageList.vue";
 import SessionListItem from "./SessionListItem.vue";
 import DrawerPanel from "./DrawerPanel.vue";
 import OutlinePanel from "./OutlinePanel.vue";
+import { createSessionActionOptions, promptSessionDelete } from './session-action-menu';
 
 const chatStore = useChatStore();
 const appStore = useAppStore();
@@ -33,6 +34,7 @@ const profilesStore = useProfilesStore();
 const sessionBrowserPrefsStore = useSessionBrowserPrefsStore();
 const router = useRouter();
 const message = useMessage();
+const dialog = useDialog();
 const { t } = useI18n();
 
 const showDrawer = ref(false);
@@ -59,6 +61,10 @@ const showSessions = ref(
 );
 let mobileQuery: MediaQueryList | null = null;
 const isMobile = ref(false);
+
+function sessionProfile(sessionId: string): string | null {
+  return chatStore.sessions.find((session) => session.id === sessionId)?.profile || null;
+}
 
 function sessionHref(sessionId: string) {
   return router.resolve({
@@ -164,17 +170,6 @@ const headerTitle = computed(() =>
 
 const activeApproval = computed(() => chatStore.activePendingApproval);
 const visibleApproval = computed(() => activeApproval.value);
-
-const activeClarify = computed(() => chatStore.activePendingClarify);
-const visibleClarify = computed(() => activeClarify.value);
-const clarifyResponse = ref('');
-
-function handleClarify(response?: string) {
-  const finalResponse = response !== undefined ? response : clarifyResponse.value.trim();
-  chatStore.respondToClarify(finalResponse);
-  clarifyResponse.value = '';
-}
-
 const showNewChatModal = ref(false);
 const newChatProfile = ref<string>("default");
 const newChatProvider = ref<string>("");
@@ -287,17 +282,13 @@ function handleApproval(choice: "once" | "session" | "always" | "deny") {
   chatStore.respondApproval(choice);
 }
 
-function sessionProfile(sessionId: string): string | null {
-  return chatStore.sessions.find((session) => session.id === sessionId)?.profile || null;
-}
-
 function buildSessionUrl(sessionId: string, profile?: string | null): string {
   const href = router.resolve({
     name: "hermes.session",
     params: { sessionId },
     query: profile ? { profile } : undefined,
   }).href;
-  return `${window.location.origin}${window.location.pathname}${href}`;
+  return `${window.location.origin}${href}`;
 }
 
 async function copySessionLink(id?: string) {
@@ -417,45 +408,17 @@ const contextSession = computed(() =>
     : null,
 );
 
-const contextMenuOptions = computed(() => {
-  const options: DropdownOption[] = [{
-    label: t(contextSessionPinned.value ? "chat.unpin" : "chat.pin"),
-    key: "pin",
-  },
-  { label: t("chat.rename"), key: "rename" },
-  { label: t("chat.setWorkspace"), key: "workspace" }]
-
-  if (contextSession.value?.source === "cli") {
-    options.push({ label: t("chat.setModel"), key: "model" })
-  }
-
-  options.push({
-    label: t("chat.export"),
-    key: "export",
-    children: [
-      {
-        label: t("chat.exportFull"),
-        key: "export-full",
-        children: [
-          { label: "JSON", key: "export-full-json" },
-          { label: "TXT", key: "export-full-txt" },
-        ],
-      },
-      {
-        label: t("chat.exportCompressed"),
-        key: "export-compressed",
-        children: [
-          { label: "JSON", key: "export-compressed-json" },
-          { label: "TXT", key: "export-compressed-txt" },
-        ],
-      },
-    ],
-  })
-  options.push({ label: t("chat.openSessionInNewTab"), key: "open-link" })
-  options.push({ label: t("chat.copySessionLink"), key: "copy-link" })
-  options.push({ label: t("chat.copySessionId"), key: "copy-id" })
-  return options
-});
+const contextMenuOptions = computed(() =>
+  createSessionActionOptions(t, {
+    mode: 'chat',
+    pinned: contextSessionPinned.value,
+    canDelete: contextSessionId.value
+      ? contextSessionId.value !== chatStore.activeSessionId || chatStore.sessions.length > 1
+      : false,
+    to: contextSessionId.value ? sessionHref(contextSessionId.value) : null,
+    source: contextSession.value?.source || null,
+  }),
+);
 
 function handleContextMenu(e: MouseEvent, sessionId: string) {
   e.preventDefault();
@@ -480,8 +443,20 @@ function parseExportKey(key: string): { mode: 'full' | 'compressed'; ext: 'json'
 async function handleContextMenuSelect(key: string) {
   showContextMenu.value = false;
   if (!contextSessionId.value) return;
+  const session = chatStore.sessions.find(
+    (s) => s.id === contextSessionId.value,
+  );
   if (key === "pin") {
     sessionBrowserPrefsStore.togglePinned(contextSessionId.value);
+    return;
+  }
+  if (key === "delete") {
+    promptSessionDelete(
+      dialog,
+      t,
+      session?.title || t("common.delete"),
+      () => handleDeleteSession(contextSessionId.value!),
+    );
     return;
   }
   if (key === "copy-link") {
@@ -502,18 +477,12 @@ async function handleContextMenuSelect(key: string) {
       message.error(t("chat.exportFailed"));
     }
   } else if (key === "workspace") {
-    const session = chatStore.sessions.find(
-      (s) => s.id === contextSessionId.value,
-    );
     workspaceSessionId.value = contextSessionId.value;
     workspaceValue.value = session?.workspace || "";
     showWorkspaceModal.value = true;
   } else if (key === "model") {
     await openSessionModelModal(contextSessionId.value);
   } else if (key === "rename") {
-    const session = chatStore.sessions.find(
-      (s) => s.id === contextSessionId.value,
-    );
     renameSessionId.value = contextSessionId.value;
     renameValue.value = session?.title || "";
     showRenameModal.value = true;
@@ -521,6 +490,11 @@ async function handleContextMenuSelect(key: string) {
       renameInputRef.value?.focus();
     });
   }
+}
+
+function handleSessionAction(sessionId: string, key: string) {
+  contextSessionId.value = sessionId;
+  void handleContextMenuSelect(key);
 }
 
 function handleClickOutside() {
@@ -859,8 +833,10 @@ async function handleSessionModelCustomSubmit() {
             :selected="isSessionSelected(s.id)"
             :show-profile="true"
             :to="sessionHref(s.id)"
+            :menu-mode="'chat'"
             @select="handleSessionClick(s.id)"
             @contextmenu="handleContextMenu($event, s.id)"
+            @action="handleSessionAction(s.id, $event)"
             @delete="handleDeleteSession(s.id)"
             @toggle-select="toggleSessionSelection(s.id)"
           />
@@ -881,8 +857,10 @@ async function handleSessionModelCustomSubmit() {
           :selected="isSessionSelected(s.id)"
           :show-profile="true"
           :to="sessionHref(s.id)"
+          :menu-mode="'chat'"
           @select="handleSessionClick(s.id)"
           @contextmenu="handleContextMenu($event, s.id)"
+          @action="handleSessionAction(s.id, $event)"
           @delete="handleDeleteSession(s.id)"
           @toggle-select="toggleSessionSelection(s.id)"
         />
@@ -1252,63 +1230,6 @@ async function handleSessionModelCustomSubmit() {
               >
                 {{ t("chat.approvalDeny") }}
               </NButton>
-            </div>
-          </div>
-        </div>
-        <div v-if="visibleClarify" class="clarify-bar">
-          <div class="clarify-icon" aria-hidden="true">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
-          </div>
-          <div class="clarify-content">
-            <div class="clarify-main">
-              <div class="clarify-kicker">{{ t('chat.clarifyKicker') }}</div>
-              <div class="clarify-title">{{ t('chat.clarifyTitle') }}</div>
-              <div class="clarify-desc">{{ visibleClarify.question }}</div>
-            </div>
-            <div v-if="visibleClarify.choices && visibleClarify.choices.length" class="clarify-actions">
-              <NButton
-                v-for="choice in visibleClarify.choices"
-                :key="choice"
-                size="small"
-                type="primary"
-                @click="handleClarify(choice)"
-              >
-                {{ choice }}
-              </NButton>
-              <NButton
-                size="small"
-                type="error"
-                secondary
-                @click="handleClarify('')"
-              >
-                {{ t('chat.clarifyDismiss') }}
-              </NButton>
-            </div>
-            <div v-else class="clarify-actions">
-              <div class="clarify-input-row">
-                <NInput
-                  v-model:value="clarifyResponse"
-                  size="small"
-                  :placeholder="t('chat.clarifyPlaceholder')"
-                  @keyup.enter="handleClarify()"
-                />
-                <NButton size="small" type="primary" @click="handleClarify()">
-                  {{ t('chat.clarifySubmit') }}
-                </NButton>
-              </div>
             </div>
           </div>
         </div>
@@ -2088,83 +2009,6 @@ async function handleSessionModelCustomSubmit() {
   border-top: 1px solid $border-color;
 }
 
-
-.clarify-bar {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin: 0 16px 12px;
-  padding: 12px;
-  border: 1px solid $border-color;
-  border-radius: 8px;
-  background: $bg-card;
-  box-shadow: none;
-}
-
-.clarify-icon {
-  display: grid;
-  place-items: center;
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  color: var(--accent-primary);
-  background: rgba(var(--accent-primary-rgb), 0.12);
-  border: 1px solid rgba(var(--accent-primary-rgb), 0.2);
-  border-radius: 8px;
-}
-
-.clarify-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.clarify-main {
-  min-width: 0;
-}
-
-.clarify-kicker {
-  margin-bottom: 2px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent-primary);
-}
-
-.clarify-title {
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.3;
-  color: $text-primary;
-}
-
-.clarify-desc {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: $text-secondary;
-}
-
-.clarify-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid $border-color;
-}
-
-.clarify-input-row {
-  display: flex;
-  flex: 1;
-  gap: 8px;
-  align-items: center;
-
-  .n-input {
-    flex: 1;
-  }
-}
 @media (max-width: 768px) {
   .approval-bar {
     margin: 0 10px 10px;
@@ -2185,26 +2029,6 @@ async function handleSessionModelCustomSubmit() {
   .approval-actions :deep(.n-button) {
     width: 100%;
   }
-
-  .clarify-bar {
-    margin: 0 10px 10px;
-    padding: 10px;
-  }
-
-  .clarify-icon {
-    flex-basis: 28px;
-    width: 28px;
-    height: 28px;
-  }
-
-  .clarify-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .clarify-actions :deep(.n-button) {
-    width: 100%;
-  }
 }
 
 @media (max-width: 420px) {
@@ -2213,14 +2037,6 @@ async function handleSessionModelCustomSubmit() {
   }
 
   .approval-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .clarify-bar {
-    gap: 8px;
-  }
-
-  .clarify-actions {
     grid-template-columns: 1fr;
   }
 }
