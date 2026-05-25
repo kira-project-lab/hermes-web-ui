@@ -14,6 +14,7 @@ export function useKeyboard() {
     if (mod && e.key === 'n') {
       e.preventDefault()
       chatStore.newChat()
+      router.push({ name: 'hermes.sessionNew' })
       return
     }
 

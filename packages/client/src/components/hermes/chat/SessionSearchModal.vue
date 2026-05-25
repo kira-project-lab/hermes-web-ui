@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NButton, NInput, NModal, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { fetchSessions, searchSessions, type SessionSearchResult, type SessionSummary } from '@/api/hermes/sessions'
@@ -10,6 +10,7 @@ import { useSessionSearch } from '@/composables/useSessionSearch'
 const { t } = useI18n()
 const message = useMessage()
 const router = useRouter()
+const route = useRoute()
 const chatStore = useChatStore()
 const { sessionSearchOpen } = useSessionSearch()
 
@@ -148,8 +149,8 @@ async function openItem(item: SearchItem) {
     })
   }
   await chatStore.switchSession(item.id, messageId)
-  if (router.currentRoute.value.name !== 'hermes.chat') {
-    await router.push({ name: 'hermes.chat' })
+  if (router.currentRoute.value.name !== 'hermes.session' || router.currentRoute.value.params.sessionId !== item.id) {
+    await router.push({ name: 'hermes.session', params: { sessionId: item.id }, query: route.query })
   }
 }
 
