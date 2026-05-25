@@ -6,6 +6,7 @@ const listRepositoryBranches = vi.fn()
 const startBranchBuild = vi.fn()
 const resetPreviewTarget = vi.fn()
 const getBranchBuildSummary = vi.fn()
+const getBranchPreviewCapabilities = vi.fn()
 const getActiveProfileName = vi.fn()
 
 vi.mock('../../packages/server/src/services/hermes/dev-mode-branch-builds', () => ({
@@ -14,6 +15,7 @@ vi.mock('../../packages/server/src/services/hermes/dev-mode-branch-builds', () =
   startBranchBuild: (...args: any[]) => startBranchBuild(...args),
   resetPreviewTarget: (...args: any[]) => resetPreviewTarget(...args),
   getBranchBuildSummary: (...args: any[]) => getBranchBuildSummary(...args),
+  getBranchPreviewCapabilities: (...args: any[]) => getBranchPreviewCapabilities(...args),
 }))
 
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
@@ -55,11 +57,32 @@ beforeEach(() => {
   startBranchBuild.mockReset()
   resetPreviewTarget.mockReset()
   getBranchBuildSummary.mockReset()
+  getBranchPreviewCapabilities.mockReset()
   getActiveProfileName.mockReset()
   getActiveProfileName.mockReturnValue('default')
 })
 
 describe('dev-mode branch build controller', () => {
+  it('returns explicit branch preview capabilities', async () => {
+    const capabilities = {
+      isSuperAdmin: true,
+      devModeAvailable: true,
+      branchPreviewAvailable: true,
+      branchPreviewConfigured: true,
+      canListBranches: true,
+      canBuild: false,
+      reason: null,
+    }
+    getBranchPreviewCapabilities.mockResolvedValue(capabilities)
+    const ctx = makeCtx({ profile: { name: 'profile-a' }, user: { role: 'super_admin' } })
+
+    await ctrl.getCapabilities(ctx)
+
+    expect(getBranchPreviewCapabilities).toHaveBeenCalledWith('profile-a', true)
+    expect(ctx.status).toBe(0)
+    expect(ctx.body).toEqual(capabilities)
+  })
+
   it('lists branches even when dev mode is disabled', async () => {
     listRepositoryBranches.mockResolvedValue(['fork-review/a', 'fork-review/b'])
     const ctx = makeCtx({ profile: { name: 'profile-a' }, user: { role: 'super_admin' } })

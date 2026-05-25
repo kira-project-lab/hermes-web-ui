@@ -6,6 +6,7 @@ import { defineComponent, h, reactive } from 'vue'
 const authState = vi.hoisted(() => ({ isSuperAdmin: true }))
 const fetchBranchBuildBranches = vi.hoisted(() => vi.fn())
 const fetchBranchBuildStatus = vi.hoisted(() => vi.fn())
+const fetchBranchPreviewCapabilities = vi.hoisted(() => vi.fn())
 const buildBranchPreview = vi.hoisted(() => vi.fn())
 const resetBranchPreview = vi.hoisted(() => vi.fn())
 const useMessageMock = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ vi.mock('@/api/client', () => ({
 vi.mock('@/api/hermes/dev-mode-branch-builds', () => ({
   fetchBranchBuildBranches: (...args: any[]) => fetchBranchBuildBranches(...args),
   fetchBranchBuildStatus: (...args: any[]) => fetchBranchBuildStatus(...args),
+  fetchBranchPreviewCapabilities: (...args: any[]) => fetchBranchPreviewCapabilities(...args),
   buildBranchPreview: (...args: any[]) => buildBranchPreview(...args),
   resetBranchPreview: (...args: any[]) => resetBranchPreview(...args),
 }))
@@ -155,6 +157,15 @@ describe('DevModeSettings', () => {
     authState.isSuperAdmin = true
     resetStore()
     vi.clearAllMocks()
+    fetchBranchPreviewCapabilities.mockResolvedValue({
+      isSuperAdmin: true,
+      devModeAvailable: true,
+      branchPreviewAvailable: true,
+      branchPreviewConfigured: true,
+      canListBranches: true,
+      canBuild: false,
+      reason: null,
+    })
     fetchBranchBuildBranches.mockResolvedValue(['fork-review/review-base', 'fork-review/dev-a', 'fork-review/dev-b'])
     fetchBranchBuildStatus.mockResolvedValue({
       status: 'idle',
@@ -310,16 +321,40 @@ describe('DevModeSettings', () => {
     expect(useMessageMock.success).toHaveBeenCalledWith('settings.saved')
   })
 
-  it('shows a permission alert and avoids branch API calls for non-super-admin users', async () => {
+  it('shows a compact unavailable state when branch preview is not configured', async () => {
+    fetchBranchPreviewCapabilities.mockResolvedValue({
+      isSuperAdmin: true,
+      devModeAvailable: true,
+      branchPreviewAvailable: false,
+      branchPreviewConfigured: false,
+      canListBranches: false,
+      canBuild: false,
+      reason: 'not_git_repo',
+    })
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect(fetchBranchPreviewCapabilities).toHaveBeenCalledTimes(1)
+    expect(fetchBranchBuildBranches).not.toHaveBeenCalled()
+    expect(fetchBranchBuildStatus).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('settings.dev.notConfiguredTitle')
+    expect(wrapper.text()).toContain('settings.dev.capabilityReasons.not_git_repo')
+    expect(wrapper.text()).not.toContain('settings.dev.branchToPreview')
+    expect(wrapper.text()).not.toContain('settings.dev.buildPreview')
+  })
+
+  it('renders nothing for non-super-admin users', async () => {
     authState.isSuperAdmin = false
 
     const wrapper = mountComponent()
     await flushPromises()
 
+    expect(fetchBranchPreviewCapabilities).not.toHaveBeenCalled()
     expect(fetchBranchBuildBranches).not.toHaveBeenCalled()
     expect(fetchBranchBuildStatus).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('settings.dev.permissionTitle')
-    expect(wrapper.text()).toContain('settings.dev.permissionBody')
+    expect(wrapper.text()).not.toContain('settings.dev.permissionTitle')
     expect(wrapper.text()).not.toContain('settings.dev.branchToPreview')
+    expect(wrapper.text()).not.toContain('settings.dev.branchPreviewTitle')
   })
 })

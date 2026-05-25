@@ -8,12 +8,14 @@ import {
   buildBranchPreview,
   fetchBranchBuildBranches,
   fetchBranchBuildStatus,
+  fetchBranchPreviewCapabilities,
   resetBranchPreview,
   type BranchBuildSummary,
+  type BranchPreviewCapabilities,
 } from '@/api/hermes/dev-mode-branch-builds'
 import SettingRow from './SettingRow.vue'
 
-const DEFAULT_REVIEW_BASE = 'fork-review/review-base'
+const DEFAULT_REVIEW_BASE = 'main'
 
 const settingsStore = useSettingsStore()
 const message = useMessage()
@@ -24,14 +26,18 @@ const saving = ref(false)
 const running = ref(false)
 const branchList = ref<string[]>([])
 const branchBuild = ref<BranchBuildSummary | null>(null)
+const capabilities = ref<BranchPreviewCapabilities | null>(null)
 const draftEnabled = ref(false)
 const draftReviewBase = ref(DEFAULT_REVIEW_BASE)
 const draftPreviewBranch = ref('')
 const showAdvancedDetails = ref(false)
 
 const canUseDevMode = computed(() => isStoredSuperAdmin())
+const branchPreviewConfigured = computed(() => capabilities.value?.branchPreviewConfigured !== false)
+const canListBranches = computed(() => canUseDevMode.value && capabilities.value?.canListBranches !== false)
+const capabilityReason = computed(() => capabilities.value?.reason ? t(`settings.dev.capabilityReasons.${capabilities.value.reason}`) : t('settings.dev.capabilityUnavailable'))
 const persistedDevEnabled = computed(() => !!settingsStore.dev.enabled)
-const canRunPreviewActions = computed(() => canUseDevMode.value && persistedDevEnabled.value)
+const canRunPreviewActions = computed(() => canUseDevMode.value && branchPreviewConfigured.value && persistedDevEnabled.value)
 const branchOptions = computed(() => branchList.value.map((branch) => ({ label: branch, value: branch })))
 const currentPreviewLabel = computed(() => {
   const branch = branchBuild.value?.previewBranch || draftPreviewBranch.value || draftReviewBase.value || '—'
@@ -100,8 +106,28 @@ watch(hasBuildError, (failed) => {
   }
 }, { immediate: true })
 
+async function refreshCapabilities() {
+  if (!canUseDevMode.value) return null
+  try {
+    capabilities.value = await fetchBranchPreviewCapabilities()
+    return capabilities.value
+  } catch (err: any) {
+    capabilities.value = {
+      isSuperAdmin: true,
+      devModeAvailable: true,
+      branchPreviewAvailable: false,
+      branchPreviewConfigured: false,
+      canListBranches: false,
+      canBuild: false,
+      reason: 'not_git_repo',
+    }
+    message.error(err?.message || t('settings.dev.loadFailed'))
+    return capabilities.value
+  }
+}
+
 async function refreshBranches() {
-  if (!canUseDevMode.value) return
+  if (!canListBranches.value) return
   loading.value = true
   try {
     branchList.value = await fetchBranchBuildBranches()
@@ -117,6 +143,12 @@ async function refreshStatus() {
   if (!canUseDevMode.value) return
   loading.value = true
   try {
+    const caps = await refreshCapabilities()
+    if (caps && !caps.branchPreviewConfigured) {
+      branchBuild.value = null
+      branchList.value = []
+      return
+    }
     const [status, branches] = await Promise.all([
       fetchBranchBuildStatus(),
       fetchBranchBuildBranches(),
@@ -206,27 +238,38 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="settings-section dev-mode-settings">
-    <NAlert type="warning" class="dev-warning" :title="t('settings.dev.warningTitle')">
-      {{ t('settings.dev.warningBody') }}
+  <section v-if="canUseDevMode" class="settings-section dev-mode-settings">
+    <div class="developer-tools-header">
+      <h3>{{ t('settings.dev.developerToolsTitle') }}</h3>
+      <p>{{ t('settings.dev.developerToolsHint') }}</p>
+    </div>
+
+    <NAlert
+      v-if="capabilities && !branchPreviewConfigured"
+      type="info"
+      class="dev-warning"
+      :title="t('settings.dev.notConfiguredTitle')"
+    >
+      {{ capabilityReason }}
     </NAlert>
 
-    <NAlert v-if="!canUseDevMode" type="error" class="dev-warning" :title="t('settings.dev.permissionTitle')">
-      {{ t('settings.dev.permissionBody') }}
-    </NAlert>
+    <template v-else>
+      <NAlert type="warning" class="dev-warning" :title="t('settings.dev.warningTitle')">
+        {{ t('settings.dev.warningBody') }}
+      </NAlert>
 
-    <SettingRow :label="t('settings.dev.enabled')" :hint="t('settings.dev.enabledHint')">
-      <NSwitch
-        v-model:value="draftEnabled"
-        :disabled="!canUseDevMode"
-      />
-    </SettingRow>
+      <SettingRow :label="t('settings.dev.enabled')" :hint="t('settings.dev.enabledHint')">
+        <NSwitch
+          v-model:value="draftEnabled"
+          :disabled="!canUseDevMode"
+        />
+      </SettingRow>
 
-    <NAlert v-if="canUseDevMode && !persistedDevEnabled" type="info" class="dev-disabled-note">
-      {{ t('settings.dev.disabledNote') }}
-    </NAlert>
+      <NAlert v-if="canUseDevMode && !persistedDevEnabled" type="info" class="dev-disabled-note">
+        {{ t('settings.dev.disabledNote') }}
+      </NAlert>
 
-    <NCard v-if="canUseDevMode" size="small" class="branch-preview-card" :title="t('settings.dev.branchPreviewTitle')">
+      <NCard size="small" class="branch-preview-card" :title="t('settings.dev.branchPreviewTitle')">
       <template #header-extra>
         <NTag :type="statusType(branchBuild?.status || 'idle')" size="small">
           {{ branchBuild?.status || 'idle' }}
@@ -312,12 +355,29 @@ onMounted(async () => {
 
         <pre class="log-tail">{{ branchBuild?.logTail?.join('\n') || t('settings.dev.noLogs') }}</pre>
       </div>
-    </NCard>
+      </NCard>
+    </template>
   </section>
 </template>
 
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
+
+.developer-tools-header {
+  margin-bottom: 16px;
+
+  h3 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    color: $text-primary;
+  }
+
+  p {
+    margin: 0;
+    font-size: 13px;
+    color: $text-muted;
+  }
+}
 
 .dev-warning,
 .dev-disabled-note {

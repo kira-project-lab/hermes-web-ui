@@ -25,6 +25,25 @@ export interface BranchBuildActionResponse extends BranchBuildSummary {
   worktreePath?: string
 }
 
+export type BranchPreviewCapabilityReason =
+  | 'disabled'
+  | 'repo_path_missing'
+  | 'not_git_repo'
+
+export interface BranchPreviewCapabilities {
+  isSuperAdmin: boolean
+  devModeAvailable: boolean
+  branchPreviewAvailable: boolean
+  branchPreviewConfigured: boolean
+  canListBranches: boolean
+  canBuild: boolean
+  reason: BranchPreviewCapabilityReason | null
+}
+
+export async function fetchBranchPreviewCapabilities(): Promise<BranchPreviewCapabilities> {
+  return request<BranchPreviewCapabilities>('/api/hermes/dev/branch-builds/capabilities')
+}
+
 export async function fetchBranchBuildBranches(): Promise<string[]> {
   const data = await request<BranchBuildListResponse>('/api/hermes/dev/branch-builds/branches')
   return data.branches || []
