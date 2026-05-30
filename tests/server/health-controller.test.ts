@@ -93,6 +93,31 @@ describe('health controller version metadata', () => {
     expect(ctx.body.webui_update_available).toBe(true)
   })
 
+  it('does not mark an older npm version as an available update', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const pkg = readRootPackage()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ version: '0.6.5' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { checkLatestVersion, healthCheck } = await loadHealthControllerWithoutInjectedVersion()
+
+    await checkLatestVersion()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://registry.npmjs.org/${pkg.name}/latest`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+
+    const ctx = createMockCtx()
+    await healthCheck(ctx)
+
+    expect(ctx.body.webui_latest).toBe('0.6.5')
+    expect(ctx.body.webui_update_available).toBe(false)
+  })
+
   it('does not throw when latest-version lookup fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
 

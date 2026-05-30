@@ -45,6 +45,35 @@ const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
 
 let cachedLatestVersion = ''
 
+function parseVersion(version: string): { parts: number[]; prerelease: string } | null {
+  const cleaned = version.trim().replace(/^v/i, '')
+  const [main, prerelease = ''] = cleaned.split('-', 2)
+  const parts = main.split('.').map((part) => Number.parseInt(part, 10))
+
+  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) {
+    return null
+  }
+
+  return { parts, prerelease }
+}
+
+function isNewerVersion(latest: string, local: string): boolean {
+  const latestParsed = parseVersion(latest)
+  const localParsed = parseVersion(local)
+
+  if (!latestParsed || !localParsed) return false
+
+  for (let i = 0; i < 3; i += 1) {
+    if (latestParsed.parts[i] > localParsed.parts[i]) return true
+    if (latestParsed.parts[i] < localParsed.parts[i]) return false
+  }
+
+  if (!latestParsed.prerelease && localParsed.prerelease) return true
+  if (latestParsed.prerelease && !localParsed.prerelease) return false
+
+  return false
+}
+
 /**
  * Whether the periodic npm-registry version check is disabled.
  *
@@ -94,7 +123,7 @@ export async function healthCheck(ctx: any) {
     webui_latest: isUpdateCheckDisabled() ? '' : cachedLatestVersion,
     webui_update_available: isUpdateCheckDisabled()
       ? false
-      : Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),
+      : Boolean(LOCAL_VERSION && cachedLatestVersion && isNewerVersion(cachedLatestVersion, LOCAL_VERSION)),
     node_version: process.versions.node,
   }
 }
